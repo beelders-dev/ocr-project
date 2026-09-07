@@ -1,0 +1,16 @@
+# Python environment & cache
+.venv/
+__pycache__/
+*.pyc
+
+# Local data & datasets
+data/
+*.json
+
+# Model weights & output checkpoints
+models/
+output/
+checkpoints/
+
+# VS Code directory
+.vscode/
