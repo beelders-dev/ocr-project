@@ -3,16 +3,17 @@ import torch
 from PIL import Image
 from transformers import LayoutLMv3Processor, LayoutLMv3ForTokenClassification
 
+# Fixed label schema to match SROIE dataset labels ("COMPANY" instead of "VENDOR")
 LABELS = [
     "O",
-    "B-VENDOR",
-    "I-VENDOR",
+    "B-COMPANY",
+    "I-COMPANY",
     "B-DATE",
     "I-DATE",
-    "B-TOTAL",
-    "I-TOTAL",
     "B-ADDRESS",
     "I-ADDRESS",
+    "B-TOTAL",
+    "I-TOTAL",
 ]
 
 ID2LABEL = {i: label for i, label in enumerate(LABELS)}
@@ -26,7 +27,10 @@ class ReceiptLayoutParser:
 
         if is_local:
             self.processor = LayoutLMv3Processor.from_pretrained(
-                model_name, apply_ocr=False, local_files_only=True
+                model_name,
+                apply_ocr=False,
+                local_files_only=True,
+                use_fast=True,
             )
             self.model = LayoutLMv3ForTokenClassification.from_pretrained(
                 model_name, local_files_only=True
