@@ -283,23 +283,40 @@ def find_exact_sequence(words, entity_value):
 
 def find_address_words(words, boxes, entity_value):
     """
-    Find address words conservatively.
+    Find OCR words that correspond to the SROIE address entity.
 
-    SROIE entity addresses may contain text that is missing
-    from the OCR words, so we only label OCR words that we
-    can match with reasonable confidence.
-
-    We intentionally avoid aggressive fuzzy matching because
-    false address labels are worse than missing labels.
+    Strategy:
+    1. Match complete OCR words against portions of the address.
+    2. Handle common address-number patterns such as:
+       - NO.53
+       - NO.2&4
+       - NO. 343
+       - 27
+       - postal codes
+    3. Prefer consecutive OCR words that occur in the same
+       address/header region.
+    4. Reject obvious company/header text.
+    5. Never invent labels for text that does not exist in OCR.
     """
+
+    if not entity_value:
+        return []
+
+    # ---------------------------------------------------------
+    # Normalize the complete address.
+    # ---------------------------------------------------------
 
     target = normalize_text(entity_value)
 
     if not target:
         return []
 
+    normalized_words = [normalize_text(word) for word in words]
+
     # ---------------------------------------------------------
     # 1. Exact consecutive-word matching.
+    #
+    # This is the safest case.
     # ---------------------------------------------------------
 
     exact_match = find_exact_sequence(
@@ -311,165 +328,363 @@ def find_address_words(words, boxes, entity_value):
         return exact_match
 
     # ---------------------------------------------------------
-    # 2. Build normalized target words.
+    # 2. Build useful address fragments.
+    #
+    # We compare OCR words against the normalized address
+    # rather than comparing them against the entire entity.
     # ---------------------------------------------------------
 
-    target_words = [normalize_text(word) for word in str(entity_value).split()]
+    address_words = [normalize_text(word) for word in str(entity_value).split()]
 
-    target_words = [word for word in target_words if len(word) >= 3]
-
-    if not target_words:
-        return []
+    address_words = [word for word in address_words if word]
 
     # ---------------------------------------------------------
-    # Address words that are useful signals.
+    # 3. Reject obvious company/header words.
+    #
+    # These caused false positives such as:
+    # BOOK TA .K(TAMAN DAYA) SDN BND
+    # MR D.T.Y. (JOHOR) SDN BHD
+    # GERBANG ALAF RESTAURANTS SDN BHD
     # ---------------------------------------------------------
 
-    address_keywords = {
-        "JALAN",
-        "JLN",
-        "ROAD",
-        "STREET",
-        "TAMAN",
-        "BANDAR",
-        "KAWASAN",
-        "PERINDUSTRIAN",
-        "PERSIARAN",
-        "PETALING",
-        "JOHOR",
-        "BAHRU",
-        "SELANGOR",
-        "PENGERANG",
-        "KEMBANGAN",
-        "DAMANSARA",
-        "UPTOWN",
-        "LEVEL",
-        "NO",
-        "LOT",
-        "BLOCK",
-        "UNIT",
-        "BANGUNAN",
+    company_patterns = {
+        "SDNBHD",
+        "SDNBHD.",
+        "ENTERPRISE",
+        "RESTAURANTS",
+        "RESTAURANT",
+        "TRADING",
+        "HOLDINGS",
+        "CORPORATION",
+        "CORP",
+        "LIMITED",
+        "LTD",
+        "BERHAD",
+        "BHD",
+        "PTE",
+        "INC",
     }
+
+    def looks_like_company(word_index):
+        text = normalize_text(words[word_index])
+
+        for pattern in company_patterns:
+            if pattern in text:
+                return True
+
+        return False
+
+    # ---------------------------------------------------------
+    # 4. Find address-number candidates.
+    #
+    # These are important because SROIE often has:
+    #
+    # NO.53
+    # NO.2&4
+    # NO. 343
+    # 27
+    # LOT 1851-A
+    # 81100
+    #
+    # But avoid monetary values.
+    # ---------------------------------------------------------
+
+    def is_address_number(word):
+        raw = str(word).strip().upper()
+        normalized = normalize_text(raw)
+
+        if not normalized:
+            return False
+
+        # Money-like values should not become addresses.
+        if re.fullmatch(
+            r"\d+(?:[.,]\d{1,2})?",
+            raw.replace(" ", ""),
+        ):
+            # Postal codes are five digits in these receipts.
+            if re.fullmatch(r"\d{5}", normalized):
+                return True
+
+            # Small plain integers can be house numbers.
+            if re.fullmatch(r"\d{1,4}", normalized):
+                return True
+
+            return False
+
+        # NO.53 / NO.2&4 / NO. 343
+        if re.search(r"\bNO", normalized):
+            if re.search(r"\d", normalized):
+                return True
+
+        # LOT 1851-A / LOT 123
+        if normalized.startswith("LOT") and re.search(
+            r"\d",
+            normalized,
+        ):
+            return True
+
+        return False
+
+    # ---------------------------------------------------------
+    # 5. Match OCR words against address fragments.
+    #
+    # Exact substring matches are preferred.
+    # ---------------------------------------------------------
 
     candidates = []
 
     for index, word in enumerate(words):
-        normalized_word = normalize_text(word)
 
-        if len(normalized_word) < 3:
+        normalized_word = normalized_words[index]
+
+        if not normalized_word:
             continue
 
-        # Never treat decimal amounts as address words.
-        if "." in str(word):
-            number = normalize_number(word)
+        # Never use obvious company words as address anchors.
+        if looks_like_company(index):
+            continue
 
-            if number is not None:
-                continue
+        # Skip very short generic words.
+        if len(normalized_word) < 2:
+            continue
+
+        # Avoid OCR text that is clearly not address-like.
+        if normalized_word in {
+            "TEL",
+            "FAX",
+            "EMAIL",
+            "GST",
+            "TAX",
+            "CASH",
+            "CHANGE",
+            "SUBTOTAL",
+            "TOTAL",
+        }:
+            continue
 
         best_score = 0.0
-        best_target = None
 
-        for target_word in target_words:
-            score = SequenceMatcher(
-                None,
-                normalized_word,
-                target_word,
-            ).ratio()
+        for address_word in address_words:
 
-            if score > best_score:
-                best_score = score
-                best_target = target_word
+            if not address_word:
+                continue
 
-        if best_score < 0.85:
-            continue
+            # Exact normalized match.
+            if normalized_word == address_word:
+                score = 1.0
 
-        keyword_bonus = 0.0
+            # OCR word can contain the address fragment.
+            elif len(address_word) >= 4 and address_word in normalized_word:
+                score = 0.95
 
-        for keyword in address_keywords:
-            if keyword in normalized_word:
-                keyword_bonus = 0.10
-                break
+            elif len(normalized_word) >= 4 and normalized_word in address_word:
+                score = 0.90
 
-        candidates.append(
-            {
-                "index": index,
-                "score": best_score + keyword_bonus,
-                "target": best_target,
-            }
-        )
+            else:
+                score = 0.0
+
+            best_score = max(
+                best_score,
+                score,
+            )
+
+        # -----------------------------------------------------
+        # Numeric address components.
+        # -----------------------------------------------------
+
+        if is_address_number(word):
+
+            if normalized_word in target:
+                best_score = max(
+                    best_score,
+                    0.95,
+                )
+
+        if best_score > 0:
+            candidates.append(
+                {
+                    "index": index,
+                    "score": best_score,
+                }
+            )
 
     if not candidates:
         return []
 
     # ---------------------------------------------------------
-    # 3. Only keep strong matches.
+    # 6. Sort candidates by OCR position.
     # ---------------------------------------------------------
 
-    candidates.sort(
+    candidates.sort(key=lambda item: item["index"])
+
+    candidate_indexes = {item["index"] for item in candidates}
+
+    # ---------------------------------------------------------
+    # 7. Find the strongest address run.
+    #
+    # Address OCR is normally represented as one or several
+    # consecutive lines. We therefore prefer candidates that
+    # occur close together instead of isolated matches.
+    # ---------------------------------------------------------
+
+    runs = []
+
+    current_run = []
+
+    for candidate in candidates:
+
+        index = candidate["index"]
+
+        if not current_run:
+            current_run = [candidate]
+            continue
+
+        previous_index = current_run[-1]["index"]
+
+        # Consecutive OCR words.
+        if index == previous_index + 1:
+            current_run.append(candidate)
+            continue
+
+        # Address OCR should be consecutive.
+        if index == previous_index + 1:
+            current_run.append(candidate)
+            continue
+
+        runs.append(current_run)
+        current_run = [candidate]
+
+    if current_run:
+        runs.append(current_run)
+
+    # ---------------------------------------------------------
+    # 8. Score each run.
+    #
+    # Consecutive address words are much stronger than a single
+    # fuzzy match such as "TAMAN" inside a company name.
+    # ---------------------------------------------------------
+
+    scored_runs = []
+
+    for run in runs:
+
+        indexes = [item["index"] for item in run]
+
+        score = sum(item["score"] for item in run)
+
+        # Strong bonus for multiple consecutive matches.
+        if len(run) >= 2:
+            score += 1.0
+
+        if len(run) >= 3:
+            score += 1.0
+
+        # Bonus when the run contains an address number.
+        if any(is_address_number(words[index]) for index in indexes):
+            score += 1.5
+
+        scored_runs.append(
+            {
+                "indexes": indexes,
+                "score": score,
+            }
+        )
+
+    scored_runs.sort(
         key=lambda item: item["score"],
         reverse=True,
     )
 
-    # Don't start an address from a generic location word.
-    generic_location_words = {
-        "JOHOR",
-        "SELANGOR",
-        "BAHRU",
-        "PETALING",
-        "MALAYSIA",
-    }
-
-    valid_starts = [
-        candidate
-        for candidate in candidates
-        if candidate["target"] not in generic_location_words
-    ]
-
-    if not valid_starts:
-        return []
-
-    strongest = valid_starts[0]
-
-    selected = [strongest["index"]]
+    best_run = scored_runs[0]
 
     # ---------------------------------------------------------
-    # 4. Add other strong candidates that are spatially close.
+    # 9. Reject weak isolated matches.
+    #
+    # This prevents things like:
+    #
+    # GERBANG ALAF RESTAURANTS SDN BHD
+    #
+    # from becoming B-ADDRESS merely because it contains
+    # "JOHOR" or another generic location word.
     # ---------------------------------------------------------
 
-    for candidate in candidates[1:]:
+    if len(best_run["indexes"]) == 1:
+
+        index = best_run["indexes"][0]
+
+        word = words[index]
+        normalized_word = normalized_words[index]
+
+        # A lone location word is too weak.
+        if normalized_word in {
+            "JOHOR",
+            "SELANGOR",
+            "BAHRU",
+            "PETALING",
+            "MALAYSIA",
+        }:
+            return []
+
+        # A lone non-numeric word is also too weak unless it
+        # is a strong address marker.
+        strong_markers = {
+            "LEVEL",
+            "LOT",
+            "NO",
+            "JALAN",
+            "JLN",
+            "ROAD",
+            "STREET",
+            "TAMAN",
+            "BANDAR",
+            "KAWASAN",
+            "PERSIARAN",
+            "BLOCK",
+            "UNIT",
+            "BANGUNAN",
+        }
+
+        if normalized_word not in strong_markers:
+            if not is_address_number(word):
+                return []
+
+    # ---------------------------------------------------------
+    # 10. Expand only to nearby candidates.
+    #
+    # Do NOT spatially expand from arbitrary words.
+    # This prevents a false company match from pulling in
+    # unrelated receipt text.
+    # ---------------------------------------------------------
+
+    selected = set(best_run["indexes"])
+
+    best_start = min(selected)
+    best_end = max(selected)
+
+    for candidate in candidates:
+
         index = candidate["index"]
 
-        if index == strongest["index"]:
+        if index in selected:
             continue
 
-        # Don't accept weak fuzzy matches.
-        if candidate["score"] < 0.85:
+        # Only include nearby OCR words.
+        if index < best_start - 1:
             continue
 
-        close_to_existing = False
+        if index > best_end + 1:
+            continue
 
-        for selected_index in selected:
-            y_distance = vertical_distance(
-                boxes[selected_index],
-                boxes[index],
-            )
+        # Require a reasonably strong match.
+        if candidate["score"] < 0.90:
+            continue
 
-            x_distance = horizontal_distance(
-                boxes[selected_index],
-                boxes[index],
-            )
+        if looks_like_company(index):
+            continue
 
-            # Same line / nearby line.
-            if y_distance <= 100 and x_distance <= 500:
-                close_to_existing = True
-                break
+        selected.add(index)
 
-        if close_to_existing:
-            selected.append(index)
-
-    selected.sort()
-
-    return selected
+    return sorted(selected)
 
 
 def find_company_words(words, entity_value):
