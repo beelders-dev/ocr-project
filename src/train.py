@@ -18,6 +18,8 @@ LEARNING_RATE = 5e-5
 
 MODEL_NAME = "microsoft/layoutlmv3-base"
 
+TRAIN_SAMPLES = 100
+
 
 def load_dataset():
     with open(DATASET_PATH, "r", encoding="utf-8") as f:
@@ -32,6 +34,8 @@ def load_dataset():
 
     train_data = dataset[:split_index]
     val_data = dataset[split_index:]
+
+    train_data = train_data[:TRAIN_SAMPLES]
 
     print(f"Training receipts:   {len(train_data)}")
     print(f"Validation receipts: {len(val_data)}")
@@ -109,11 +113,60 @@ def create_dataloaders(train_data, val_data):
     return train_loader, val_loader
 
 
-def run_training_smoke_test(train_loader):
-    print("\n" + "=" * 60)
-    print("TRAINING SMOKE TEST")
-    print("=" * 60)
+def train_one_epoch(model, train_loader, optimizer):
+    model.train()
 
+    total_loss = 0.0
+
+    for step, batch in enumerate(train_loader, start=1):
+        batch = {key: value.to(device) for key, value in batch.items()}
+
+        optimizer.zero_grad()
+
+        outputs = model(
+            input_ids=batch["input_ids"],
+            attention_mask=batch["attention_mask"],
+            bbox=batch["bbox"],
+            pixel_values=batch["pixel_values"],
+            labels=batch["labels"],
+        )
+
+        loss = outputs.loss
+
+        loss.backward()
+        optimizer.step()
+
+        total_loss += loss.item()
+
+        if step % 50 == 0:
+            print(f"  Step {step}/{len(train_loader)} " f"- Loss: {loss.item():.4f}")
+
+    return total_loss / len(train_loader)
+
+
+def evaluate(model, val_loader):
+    model.eval()
+
+    total_loss = 0.0
+
+    with torch.no_grad():
+        for batch in val_loader:
+            batch = {key: value.to(device) for key, value in batch.items()}
+
+            outputs = model(
+                input_ids=batch["input_ids"],
+                attention_mask=batch["attention_mask"],
+                bbox=batch["bbox"],
+                pixel_values=batch["pixel_values"],
+                labels=batch["labels"],
+            )
+
+            total_loss += outputs.loss.item()
+
+    return total_loss / len(val_loader)
+
+
+def create_model():
     model = LayoutLMv3ForTokenClassification.from_pretrained(
         MODEL_NAME,
         num_labels=len(LABEL_LIST),
@@ -121,57 +174,13 @@ def run_training_smoke_test(train_loader):
         label2id={label: i for i, label in enumerate(LABEL_LIST)},
     )
 
-    model.to(device)
-    model.train()
-
-    optimizer = torch.optim.AdamW(
-        model.parameters(),
-        lr=LEARNING_RATE,
-    )
-
-    batch = next(iter(train_loader))
-
-    batch = {key: value.to(device) for key, value in batch.items()}
-
-    print(f"Input IDs shape:    {batch['input_ids'].shape}")
-    print(f"Bounding boxes:     {batch['bbox'].shape}")
-    print(f"Pixel values:       {batch['pixel_values'].shape}")
-    print(f"Labels shape:       {batch['labels'].shape}")
-
-    optimizer.zero_grad()
-
-    outputs = model(
-        input_ids=batch["input_ids"],
-        attention_mask=batch["attention_mask"],
-        bbox=batch["bbox"],
-        pixel_values=batch["pixel_values"],
-        labels=batch["labels"],
-    )
-
-    loss = outputs.loss
-
-    print(f"Loss before update: {loss.item():.4f}")
-
-    loss.backward()
-
-    classifier_grad = model.classifier.weight.grad
-
-    if classifier_grad is None:
-        raise RuntimeError("No gradient was produced.")
-
-    print(f"Classifier gradient norm: {classifier_grad.norm().item():.6f}")
-
-    optimizer.step()
-
-    print("Optimizer step completed.")
-    print("Training smoke test passed.")
+    return model.to(device)
 
 
 def main():
     train_data, val_data = load_dataset()
 
     print_label_distribution(train_data, val_data)
-
     inspect_samples(train_data)
 
     train_loader, val_loader = create_dataloaders(
@@ -183,7 +192,29 @@ def main():
     print(f"Training batches:   {len(train_loader)}")
     print(f"Validation batches: {len(val_loader)}")
 
-    run_training_smoke_test(train_loader)
+    model = create_model()
+
+    optimizer = torch.optim.AdamW(
+        model.parameters(),
+        lr=LEARNING_RATE,
+    )
+
+    print("\nStarting training...")
+
+    train_loss = train_one_epoch(
+        model,
+        train_loader,
+        optimizer,
+    )
+
+    print(f"\nTraining loss: {train_loss:.4f}")
+
+    val_loss = evaluate(
+        model,
+        val_loader,
+    )
+
+    print(f"Validation loss: {val_loss:.4f}")
 
 
 if __name__ == "__main__":
