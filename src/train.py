@@ -168,6 +168,37 @@ def evaluate(model, val_loader):
     return total_loss / len(val_loader)
 
 
+def evaluate_predictions(model, val_loader):
+    model.eval()
+
+    total_tokens = 0
+    correct_tokens = 0
+
+    with torch.no_grad():
+        for batch in val_loader:
+            batch = {key: value.to(device) for key, value in batch.items()}
+
+            outputs = model(
+                input_ids=batch["input_ids"],
+                attention_mask=batch["attention_mask"],
+                bbox=batch["bbox"],
+                pixel_values=batch["pixel_values"],
+            )
+
+            predictions = outputs.logits.argmax(dim=-1)
+            labels = batch["labels"]
+
+            valid_tokens = labels != -100
+
+            correct_tokens += ((predictions == labels) & valid_tokens).sum().item()
+
+            total_tokens += valid_tokens.sum().item()
+
+    accuracy = correct_tokens / total_tokens
+
+    print(f"\nToken-level accuracy: {accuracy:.4f}")
+
+
 def create_model():
     model = LayoutLMv3ForTokenClassification.from_pretrained(
         MODEL_NAME,
@@ -211,15 +242,10 @@ def main():
 
     print(f"\nTraining loss: {train_loss:.4f}")
 
-    val_loss = evaluate(
-        model,
-        val_loader,
-    )
-
+    val_loss = evaluate(model, val_loader)
     print(f"Validation loss: {val_loss:.4f}")
-
+    evaluate_predictions(model, val_loader)
     model.save_pretrained(CHECKPOINT_DIR)
-
     print(f"\nModel saved to: {CHECKPOINT_DIR}")
 
 
