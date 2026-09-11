@@ -18,9 +18,9 @@ LEARNING_RATE = 5e-5
 
 MODEL_NAME = "microsoft/layoutlmv3-base"
 
-CHECKPOINT_DIR = "models/layoutlmv3_receipt_100"
+CHECKPOINT_DIR = "models/layoutlmv3_receipt_500"
 
-TRAIN_SAMPLES = 100
+TRAIN_SAMPLES = 500
 
 
 def load_dataset():
