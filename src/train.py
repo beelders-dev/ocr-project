@@ -18,6 +18,8 @@ LEARNING_RATE = 5e-5
 
 MODEL_NAME = "microsoft/layoutlmv3-base"
 
+CHECKPOINT_DIR = "models/layoutlmv3_receipt_100"
+
 TRAIN_SAMPLES = 100
 
 
@@ -215,6 +217,10 @@ def main():
     )
 
     print(f"Validation loss: {val_loss:.4f}")
+
+    model.save_pretrained(CHECKPOINT_DIR)
+
+    print(f"\nModel saved to: {CHECKPOINT_DIR}")
 
 
 if __name__ == "__main__":
