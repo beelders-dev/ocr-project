@@ -107,7 +107,11 @@ class ReceiptDataset(Dataset):
         token_labels_list = []
 
         for word, box, label in zip(tokens, normalized_boxes, word_labels):
-            subword_ids = self.tokenizer.encode(word, add_special_tokens=False)
+            subword_ids = self.tokenizer(
+                [word],
+                boxes=[box],
+                add_special_tokens=False,
+            )["input_ids"]
             if not subword_ids:
                 subword_ids = [self.tokenizer.unk_token_id or 0]
 

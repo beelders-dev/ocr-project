@@ -15,6 +15,7 @@ LABEL_LIST = [
     "B-ADDRESS",
     "I-ADDRESS",
     "B-TOTAL",
+    "I-TOTAL",
 ]
 
 LABEL2ID = {label: i for i, label in enumerate(LABEL_LIST)}
@@ -52,25 +53,39 @@ def normalize_number(text):
     """
     Normalize a monetary value.
 
-    Example:
+    Examples:
         "RM 69.20" -> "69.20"
         "69.20"    -> "69.20"
         "69.2"     -> "69.20"
-    """
-    text = str(text).replace(",", "")
+        "NETT TOTAL: $8.20" -> "8.20"
 
-    match = re.search(
-        r"\d+(?:\.\d+)?",
+    Returns None when the text does not look like a monetary value.
+    """
+    text = str(text).strip().upper().replace(",", "")
+
+    # Look for a number that has a decimal portion.
+    decimal_match = re.search(
+        r"\d+\.\d{1,2}",
         text,
     )
 
-    if not match:
-        return None
+    if decimal_match:
+        try:
+            return f"{float(decimal_match.group(0)):.2f}"
+        except ValueError:
+            return None
 
-    try:
-        return f"{float(match.group(0)):.2f}"
-    except ValueError:
-        return None
+    # Allow plain integers only when the entire OCR word is numeric
+    # or contains a currency symbol/code.
+    cleaned = re.sub(r"^(RM|MYR|\$)\s*", "", text).strip()
+
+    if re.fullmatch(r"\d+", cleaned):
+        try:
+            return f"{float(cleaned):.2f}"
+        except ValueError:
+            return None
+
+    return None
 
 
 def box_center(box):
@@ -107,17 +122,168 @@ def find_date_word(words, entity_value):
     """
     Find the OCR word containing the expected date.
 
-    OCR may contain additional information such as time.
+    OCR may contain additional information such as time,
+    and the date format may differ from the ground truth.
     """
+
     target = normalize_text(entity_value)
 
     if not target:
         return []
 
+    # First try the existing exact normalized match.
     for index, word in enumerate(words):
         normalized_word = normalize_text(word)
 
         if target in normalized_word:
+            return [index]
+
+    # Extract a normalized date as (year, month, day).
+    def parse_date(text):
+        text = str(text).strip().upper()
+
+        # YYYYMMDD
+        match = re.search(r"\b(20\d{2})(\d{2})(\d{2})\b", text)
+        if match:
+            return (
+                int(match.group(1)),
+                int(match.group(2)),
+                int(match.group(3)),
+            )
+
+        # YYYY-MM-DD
+        match = re.search(r"\b(20\d{2})[-/](\d{1,2})[-/](\d{1,2})\b", text)
+        if match:
+            return (
+                int(match.group(1)),
+                int(match.group(2)),
+                int(match.group(3)),
+            )
+
+        # DD/MM/YYYY or DD-MM-YYYY
+        match = re.search(r"\b(\d{1,2})[-/](\d{1,2})[-/](20\d{2})\b", text)
+        if match:
+            return (
+                int(match.group(3)),
+                int(match.group(2)),
+                int(match.group(1)),
+            )
+
+        # DD/MM/YY or DD-MM-YY
+        match = re.search(r"\b(\d{1,2})[-/](\d{1,2})[-/](\d{2})\b", text)
+        if match:
+            return (
+                2000 + int(match.group(3)),
+                int(match.group(2)),
+                int(match.group(1)),
+            )
+
+        # Month-name formats:
+        # 30 DEC 17
+        # OCT 3, 2016
+        month_names = {
+            "JAN": 1,
+            "FEB": 2,
+            "MAR": 3,
+            "APR": 4,
+            "MAY": 5,
+            "JUN": 6,
+            "JUL": 7,
+            "AUG": 8,
+            "SEP": 9,
+            "OCT": 10,
+            "NOV": 11,
+            "DEC": 12,
+        }
+
+        month_pattern = (
+            r"\b("
+            + "|".join(month_names.keys())
+            + r")\s+(\d{1,2})(?:,)?\s+(20\d{2}|\d{2})\b"
+        )
+
+        match = re.search(month_pattern, text)
+
+        if match:
+            year = int(match.group(3))
+
+            if year < 100:
+                year += 2000
+
+            return (
+                year,
+                month_names[match.group(1)],
+                int(match.group(2)),
+            )
+
+        # Reverse month format:
+        # 3 OCT 2016
+        match = re.search(
+            r"\b(\d{1,2})\s+("
+            + "|".join(month_names.keys())
+            + r")(?:,)?\s+(20\d{2}|\d{2})\b",
+            text,
+        )
+
+        if match:
+            year = int(match.group(3))
+
+            if year < 100:
+                year += 2000
+
+            return (
+                year,
+                month_names[match.group(2)],
+                int(match.group(1)),
+            )
+
+        return None
+
+    target_date = parse_date(entity_value)
+
+    if target_date is None:
+        return []
+
+    # Try to find the same date in OCR, even when formatting differs.
+    for index, word in enumerate(words):
+        word_date = parse_date(word)
+
+        if word_date == target_date:
+            return [index]
+
+    # Allow partial OCR dates such as:
+    # Ground truth: "OCT 3, 2016"
+    # OCR:          "OCT 3"
+    target_month = target_date[1]
+    target_day = target_date[2]
+
+    month_names = {
+        1: "JAN",
+        2: "FEB",
+        3: "MAR",
+        4: "APR",
+        5: "MAY",
+        6: "JUN",
+        7: "JUL",
+        8: "AUG",
+        9: "SEP",
+        10: "OCT",
+        11: "NOV",
+        12: "DEC",
+    }
+
+    month_name = month_names[target_month]
+
+    for index, word in enumerate(words):
+        normalized_word = normalize_text(word)
+
+        if not normalized_word:
+            continue
+
+        if re.search(
+            rf"\b{month_name}\s*{target_day}\b",
+            normalized_word,
+        ):
             return [index]
 
     return []
@@ -127,16 +293,20 @@ def find_total_word(words, boxes, entity_value):
     """
     Find the OCR word that corresponds to the receipt total.
 
-    The function returns a list of OCR indexes because
-    create_ner_tags() expects a list.
+    Strategy:
+    1. If the SROIE total exists, prefer an exact numeric match.
+    2. Prefer values near explicit total labels.
+    3. If no total label exists, fall back to the exact numeric match.
+    4. If SROIE total is missing, look for values attached to
+       explicit total labels such as "TOTAL AMOUNT" or "NETT TOTAL".
     """
 
     normalized_target = normalize_number(entity_value)
 
-    if normalized_target is None:
-        return []
+    target_number = None
 
-    target_number = float(normalized_target)
+    if normalized_target is not None:
+        target_number = float(normalized_target)
 
     total_keywords = [
         "TOTAL ROUNDED",
@@ -144,12 +314,15 @@ def find_total_word(words, boxes, entity_value):
         "TOTAL AMT",
         "TOTAL AMOUNT",
         "TOTAL SALES",
+        "NETT TOTAL",
         "TOTAL",
     ]
 
     label_candidates = []
 
-    # Find OCR words that look like total labels.
+    # ---------------------------------------------------------
+    # Find OCR words containing total-related labels
+    # ---------------------------------------------------------
     for index, word in enumerate(words):
         normalized_word = normalize_text(word)
 
@@ -165,24 +338,99 @@ def find_total_word(words, boxes, entity_value):
                 )
                 break
 
-    if not label_candidates:
-        return []
+    # ---------------------------------------------------------
+    # CASE 1:
+    # We have an expected total and total labels exist.
+    # ---------------------------------------------------------
+    if target_number is not None and label_candidates:
 
-    candidates = []
+        candidates = []
 
-    for label in label_candidates:
-        label_index = label["index"]
-        label_box = boxes[label_index]
+        for label in label_candidates:
+            label_index = label["index"]
+            label_box = boxes[label_index]
 
-        label_x1, label_y1, label_x2, label_y2 = label_box
+            label_x1, label_y1, label_x2, label_y2 = label_box
+            label_center_y = (label_y1 + label_y2) / 2
 
-        label_center_y = (label_y1 + label_y2) / 2
+            for index, word in enumerate(words):
+
+                if index == label_index:
+                    continue
+
+                normalized_number = normalize_number(word)
+
+                if normalized_number is None:
+                    continue
+
+                number = float(normalized_number)
+
+                box = boxes[index]
+
+                x1, y1, x2, y2 = box
+                center_y = (y1 + y2) / 2
+
+                vertical_distance = abs(center_y - label_center_y)
+
+                same_line = vertical_distance <= 40
+
+                value_difference = abs(number - target_number)
+
+                exact_match = value_difference < 0.01
+
+                if x1 >= label_x2:
+                    horizontal_distance = x1 - label_x2
+                elif x2 <= label_x1:
+                    horizontal_distance = label_x1 - x2
+                else:
+                    horizontal_distance = 0
+
+                score = 0
+
+                if exact_match:
+                    score += 1000
+
+                if same_line:
+                    score += 500
+
+                score += (len(total_keywords) - label["priority"]) * 100
+
+                score -= horizontal_distance * 0.1
+                score -= vertical_distance * 2
+
+                candidates.append(
+                    {
+                        "index": index,
+                        "score": score,
+                    }
+                )
+
+        if candidates:
+            candidates.sort(
+                key=lambda candidate: candidate["score"],
+                reverse=True,
+            )
+
+            return [candidates[0]["index"]]
+
+    # ---------------------------------------------------------
+    # CASE 2:
+    # No total label, but SROIE gives us a total.
+    #
+    # Example:
+    # RM
+    # 149.00
+    # RM
+    # 21.00
+    # CASH
+    # RM
+    # 170.00
+    # ---------------------------------------------------------
+    if target_number is not None:
+
+        exact_matches = []
 
         for index, word in enumerate(words):
-
-            if index == label_index:
-                continue
-
             normalized_number = normalize_number(word)
 
             if normalized_number is None:
@@ -190,67 +438,42 @@ def find_total_word(words, boxes, entity_value):
 
             number = float(normalized_number)
 
-            box = boxes[index]
+            if abs(number - target_number) < 0.01:
+                exact_matches.append(index)
 
-            x1, y1, x2, y2 = box
+        if exact_matches:
+            return [exact_matches[-1]]
 
-            center_y = (y1 + y2) / 2
+    # ---------------------------------------------------------
+    # CASE 3:
+    # SROIE total is missing, but OCR contains a total label.
+    #
+    # Example:
+    # TOTAL AMOUNT: $8.20
+    # ---------------------------------------------------------
+    if label_candidates:
 
-            vertical_distance = abs(center_y - label_center_y)
+        candidates = []
 
-            # Is the amount on the same horizontal line?
-            same_line = vertical_distance <= 40
+        for label in label_candidates:
+            index = label["index"]
 
-            # Does the OCR value match the SROIE entity?
-            value_difference = abs(number - target_number)
+            number = normalize_number(words[index])
 
-            exact_match = value_difference < 0.01
+            if number is not None:
+                candidates.append(
+                    {
+                        "index": index,
+                        "priority": label["priority"],
+                    }
+                )
 
-            # Horizontal distance from the total label.
-            if x1 >= label_x2:
-                horizontal_distance = x1 - label_x2
-            elif x2 <= label_x1:
-                horizontal_distance = label_x1 - x2
-            else:
-                horizontal_distance = 0
+        if candidates:
+            candidates.sort(key=lambda candidate: candidate["priority"])
 
-            score = 0
+            return [candidates[0]["index"]]
 
-            # Exact amount is extremely important.
-            if exact_match:
-                score += 1000
-
-            # Same-line values are strongly preferred.
-            if same_line:
-                score += 500
-
-            # Prefer more specific total labels.
-            score += (len(total_keywords) - label["priority"]) * 100
-
-            # Prefer values horizontally close to the label.
-            score -= horizontal_distance * 0.1
-
-            # Penalize vertical distance.
-            score -= vertical_distance * 2
-
-            candidates.append(
-                {
-                    "index": index,
-                    "score": score,
-                }
-            )
-
-    if not candidates:
-        return []
-
-    candidates.sort(
-        key=lambda candidate: candidate["score"],
-        reverse=True,
-    )
-
-    best = candidates[0]
-
-    return [best["index"]]
+    return []
 
 
 def find_exact_sequence(words, entity_value):
@@ -464,6 +687,19 @@ def find_address_words(words, boxes, entity_value):
 
         best_score = 0.0
 
+        combined = ""
+
+        for address_word in address_words:
+            combined += address_word
+
+            if len(combined) < 3:
+                continue
+
+            if combined == normalized_word:
+
+                best_score = 1.0
+                break
+
         for address_word in address_words:
 
             if not address_word:
@@ -501,6 +737,7 @@ def find_address_words(words, boxes, entity_value):
                 )
 
         if best_score > 0:
+
             candidates.append(
                 {
                     "index": index,
@@ -542,11 +779,6 @@ def find_address_words(words, boxes, entity_value):
         previous_index = current_run[-1]["index"]
 
         # Consecutive OCR words.
-        if index == previous_index + 1:
-            current_run.append(candidate)
-            continue
-
-        # Address OCR should be consecutive.
         if index == previous_index + 1:
             current_run.append(candidate)
             continue
@@ -646,7 +878,8 @@ def find_address_words(words, boxes, entity_value):
 
         if normalized_word not in strong_markers:
             if not is_address_number(word):
-                return []
+                if best_run["score"] < 0.90:
+                    return []
 
     # ---------------------------------------------------------
     # 10. Expand only to nearby candidates.
@@ -684,6 +917,12 @@ def find_address_words(words, boxes, entity_value):
 
         selected.add(index)
 
+        print(
+            "ADDRESS DEBUG:",
+            entity_value,
+            "=>",
+            [words[i] for i in sorted(selected)],
+        )
     return sorted(selected)
 
 
@@ -707,11 +946,17 @@ def find_company_words(words, entity_value):
     normalized_words = [normalize_text(word) for word in words]
 
     best_index = None
+
     best_score = 0.0
 
     for index, word in enumerate(normalized_words):
         if not word:
             continue
+
+        # OCR may combine the company name with
+        # registration numbers or other company information.
+        if target in word:
+            return [index]
 
         score = SequenceMatcher(
             None,
@@ -738,19 +983,22 @@ def find_entity_words(
     """
     Find OCR words corresponding to an entity.
     """
+
+    # Total can still be detected even when SROIE
+    # does not provide a ground-truth total.
+    if entity_type == "total":
+        return find_total_word(
+            words,
+            boxes,
+            entity_value,
+        )
+
     if not entity_value:
         return []
 
     if entity_type == "date":
         return find_date_word(
             words,
-            entity_value,
-        )
-
-    if entity_type == "total":
-        return find_total_word(
-            words,
-            boxes,
             entity_value,
         )
 
@@ -789,9 +1037,6 @@ def create_ner_tags(words, boxes, entities):
             "",
         )
 
-        if not entity_value:
-            continue
-
         indexes = find_entity_words(
             words,
             boxes,
@@ -802,12 +1047,22 @@ def create_ner_tags(words, boxes, entities):
         if not indexes:
             continue
 
-        for position, word_index in enumerate(indexes):
-            prefix = "B-" if position == 0 else "I-"
+        assigned_count = 0
+
+        for word_index in indexes:
+
+            # Don't allow a later entity to overwrite
+            # an already assigned entity.
+            if ner_tags[word_index] != LABEL2ID["O"]:
+                continue
+
+            prefix = "B-" if assigned_count == 0 else "I-"
 
             label = f"{prefix}{entity_label}"
 
             ner_tags[word_index] = LABEL2ID[label]
+
+            assigned_count += 1
 
     return ner_tags
 
@@ -825,10 +1080,9 @@ def download_and_format_sroie():
     print("Formatting SROIE annotations " "for LayoutLMv3...")
 
     for idx, sample in enumerate(raw_dataset):
-
         # Keep this at 10 while testing.
-        if idx >= 10:
-            break
+        # if idx >= 50:
+        #     break
 
         words = sample.get(
             "words",
@@ -845,14 +1099,36 @@ def download_and_format_sroie():
             {},
         )
 
-        print(f"\nADDRESS ENTITY {idx}:", entities.get("address", ""))
-
-        print("OCR WORDS:")
-
-        for word_index, word in enumerate(words):
-            print(f"  {word_index}: {word}")
-
         image = sample.get("image")
+
+        # ---------------------------------------------------------
+        # DEBUG RECEIPT 25
+        # ---------------------------------------------------------
+        if idx == 38:
+            print("\n--- RECEIPT 25 DEBUG ---")
+
+            print("Words:")
+            for index, word in enumerate(words):
+                print(index, repr(word))
+
+            print("\nEntities:")
+            print(entities)
+
+            print("\nDetected total:")
+            total_indexes = find_total_word(
+                words,
+                bboxes,
+                entities.get("total", ""),
+            )
+
+            print(total_indexes)
+
+            for index in total_indexes:
+                print(
+                    "Selected word:",
+                    index,
+                    repr(words[index]),
+                )
 
         if idx == 0:
             print("\n--- DEBUG SAMPLE ---")
@@ -882,14 +1158,21 @@ def download_and_format_sroie():
 
         print(f"\nReceipt {idx}")
 
-        for word_index, (
-            word,
-            tag_id,
-        ) in enumerate(zip(words, ner_tags)):
-            if tag_id != LABEL2ID["O"]:
-                label = LABEL_LIST[tag_id]
+        detected = {}
 
-                print(f"  {word_index}: " f"{label:<12} -> {word}")
+        for word_index, (word, tag_id) in enumerate(zip(words, ner_tags)):
+            if tag_id == LABEL2ID["O"]:
+                continue
+
+            label = LABEL_LIST[tag_id]
+            entity_type = label[2:]  # Remove B- / I-
+
+            detected.setdefault(entity_type, [])
+            detected[entity_type].append(word)
+
+        for entity_type in ["COMPANY", "ADDRESS", "DATE", "TOTAL"]:
+            value = " ".join(detected.get(entity_type, []))
+            print(f"  {entity_type:<8}: {value or '[NOT FOUND]'}")
 
         sample_dict = {
             "id": str(idx),
