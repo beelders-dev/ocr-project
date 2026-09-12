@@ -290,60 +290,112 @@ def find_date_word(words, entity_value):
 
 
 def find_total_word(words, boxes, entity_value):
-    """
-    Find the OCR word that corresponds to the receipt total.
+    """Find the OCR word that corresponds to the receipt total.
 
     Strategy:
-    1. If the SROIE total exists, prefer an exact numeric match.
-    2. Prefer values near explicit total labels.
-    3. If no total label exists, fall back to the exact numeric match.
-    4. If SROIE total is missing, look for values attached to
-       explicit total labels such as "TOTAL AMOUNT" or "NETT TOTAL".
+    1. Find meaningful total-related labels.
+    2. Ignore labels that only contain "TOTAL" as part of another
+       word, such as "SUBTOTAL".
+    3. If SROIE provides an expected total, prefer an exact numeric
+       match near a strong total label.
+    4. If no label is available, use the exact numeric match.
+    5. If the SROIE total is missing, use a numeric value directly
+       attached to a strong total label.
     """
 
     normalized_target = normalize_number(entity_value)
 
     target_number = None
-
     if normalized_target is not None:
         target_number = float(normalized_target)
 
-    total_keywords = [
-        "TOTAL ROUNDED",
-        "GRAND TOTAL",
-        "TOTAL AMT",
-        "TOTAL AMOUNT",
-        "TOTAL SALES",
-        "NETT TOTAL",
-        "TOTAL",
-    ]
+    # Higher priority means stronger evidence that the label
+    # identifies the final receipt total.
+    total_keywords = {
+        "AMOUNT TO BE PAID": 100,
+        "GRAND TOTAL": 95,
+        "TOTAL AMOUNT": 90,
+        "TOTAL SALES": 85,
+        "TOTAL ROUNDED": 80,
+        "NETT TOTAL": 75,
+        "TOTAL DUE": 70,
+        "TOTAL": 50,
+    }
+
+    # These words should never be treated as total labels.
+    excluded_keywords = {
+        "SUBTOTAL",
+        "CASH",
+        "CASH RECEIVED",
+        "CASH TENDERED",
+        "CHANGE",
+        "DISCOUNT",
+        "ROUNDING",
+        "ROUNDING ADJUSTMENT",
+        "TAX",
+        "VAT",
+        "GST",
+    }
 
     label_candidates = []
 
     # ---------------------------------------------------------
-    # Find OCR words containing total-related labels
+    # 1. Find meaningful total labels.
     # ---------------------------------------------------------
+
     for index, word in enumerate(words):
         normalized_word = normalize_text(word)
 
-        for priority, keyword in enumerate(total_keywords):
+        if not normalized_word:
+            continue
+
+        # Explicitly reject known non-total labels.
+        if any(
+            normalize_text(excluded) in normalized_word
+            for excluded in excluded_keywords
+        ):
+            continue
+
+        best_priority = None
+        best_keyword = None
+
+        for keyword, priority in total_keywords.items():
             normalized_keyword = normalize_text(keyword)
 
+            # For the generic TOTAL keyword, require the entire
+            # OCR word to be TOTAL. This prevents SUBTOTAL from
+            # becoming a total label.
+            if keyword == "TOTAL":
+                if normalized_word == "TOTAL":
+                    if best_priority is None or priority > best_priority:
+                        best_priority = priority
+                        best_keyword = keyword
+                continue
+
+            # Longer/more specific labels can still appear inside
+            # OCR text such as "TOTALSALESINCLUSIVEGST".
             if normalized_keyword in normalized_word:
-                label_candidates.append(
-                    {
-                        "index": index,
-                        "priority": priority,
-                    }
-                )
-                break
+                if best_priority is None or priority > best_priority:
+                    best_priority = priority
+                    best_keyword = keyword
+
+        if best_priority is not None:
+            label_candidates.append(
+                {
+                    "index": index,
+                    "priority": best_priority,
+                    "keyword": best_keyword,
+                }
+            )
 
     # ---------------------------------------------------------
-    # CASE 1:
-    # We have an expected total and total labels exist.
+    # 2. We have an expected SROIE total and total labels.
+    #
+    # Find the exact expected amount nearest to the strongest
+    # total label.
     # ---------------------------------------------------------
+
     if target_number is not None and label_candidates:
-
         candidates = []
 
         for label in label_candidates:
@@ -354,7 +406,6 @@ def find_total_word(words, boxes, entity_value):
             label_center_y = (label_y1 + label_y2) / 2
 
             for index, word in enumerate(words):
-
                 if index == label_index:
                     continue
 
@@ -366,7 +417,6 @@ def find_total_word(words, boxes, entity_value):
                 number = float(normalized_number)
 
                 box = boxes[index]
-
                 x1, y1, x2, y2 = box
                 center_y = (y1 + y2) / 2
 
@@ -385,16 +435,21 @@ def find_total_word(words, boxes, entity_value):
                 else:
                     horizontal_distance = 0
 
-                score = 0
+                score = 0.0
 
+                # The expected SROIE total is strong evidence.
                 if exact_match:
                     score += 1000
 
+                # A value on the same line as the label is strong
+                # spatial evidence.
                 if same_line:
                     score += 500
 
-                score += (len(total_keywords) - label["priority"]) * 100
+                # Prefer semantically stronger labels.
+                score += label["priority"]
 
+                # Prefer nearby values.
                 score -= horizontal_distance * 0.1
                 score -= vertical_distance * 2
 
@@ -402,6 +457,7 @@ def find_total_word(words, boxes, entity_value):
                     {
                         "index": index,
                         "score": score,
+                        "label": label["keyword"],
                     }
                 )
 
@@ -411,23 +467,28 @@ def find_total_word(words, boxes, entity_value):
                 reverse=True,
             )
 
-            return [candidates[0]["index"]]
+            best = candidates[0]
+
+            print(
+                "TOTAL DEBUG:",
+                entity_value,
+                "=>",
+                words[best["index"]],
+                f"(label: {best['label']})",
+            )
+
+            return [best["index"]]
 
     # ---------------------------------------------------------
-    # CASE 2:
-    # No total label, but SROIE gives us a total.
+    # 3. No useful total label.
     #
-    # Example:
-    # RM
-    # 149.00
-    # RM
-    # 21.00
-    # CASH
-    # RM
-    # 170.00
+    # If SROIE gives us the expected total, find exact numeric
+    # matches. When multiple occurrences exist, prefer the last
+    # occurrence as a fallback because receipt totals often appear
+    # again near the bottom of the receipt.
     # ---------------------------------------------------------
-    if target_number is not None:
 
+    if target_number is not None:
         exact_matches = []
 
         for index, word in enumerate(words):
@@ -445,33 +506,71 @@ def find_total_word(words, boxes, entity_value):
             return [exact_matches[-1]]
 
     # ---------------------------------------------------------
-    # CASE 3:
-    # SROIE total is missing, but OCR contains a total label.
+    # 4. SROIE total is missing.
     #
-    # Example:
-    # TOTAL AMOUNT: $8.20
+    # Look for a numeric value directly associated with a strong
+    # total label.
     # ---------------------------------------------------------
-    if label_candidates:
 
+    if label_candidates:
         candidates = []
 
         for label in label_candidates:
-            index = label["index"]
+            label_index = label["index"]
+            label_box = boxes[label_index]
 
-            number = normalize_number(words[index])
+            label_x1, label_y1, label_x2, label_y2 = label_box
+            label_center_y = (label_y1 + label_y2) / 2
 
-            if number is not None:
+            for index, word in enumerate(words):
+                if index == label_index:
+                    continue
+
+                normalized_number = normalize_number(word)
+
+                if normalized_number is None:
+                    continue
+
+                box = boxes[index]
+                x1, y1, x2, y2 = box
+                center_y = (y1 + y2) / 2
+
+                vertical_distance = abs(center_y - label_center_y)
+
+                same_line = vertical_distance <= 40
+
+                if x1 >= label_x2:
+                    horizontal_distance = x1 - label_x2
+                elif x2 <= label_x1:
+                    horizontal_distance = label_x1 - x2
+                else:
+                    horizontal_distance = 0
+
+                score = label["priority"]
+
+                if same_line:
+                    score += 500
+
+                score -= horizontal_distance * 0.1
+                score -= vertical_distance * 2
+
                 candidates.append(
                     {
                         "index": index,
-                        "priority": label["priority"],
+                        "score": score,
+                        "label": label["keyword"],
                     }
                 )
 
         if candidates:
-            candidates.sort(key=lambda candidate: candidate["priority"])
+            candidates.sort(
+                key=lambda candidate: candidate["score"],
+                reverse=True,
+            )
 
-            return [candidates[0]["index"]]
+            best = candidates[0]
+
+            return [best["index"]]
 
     return []
 

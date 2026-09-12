@@ -1,6 +1,7 @@
 import json
 import random
 from collections import Counter
+from sklearn.metrics import classification_report
 
 import torch
 from torch.utils.data import DataLoader
@@ -170,12 +171,43 @@ def evaluate(model, val_loader):
 
 def evaluate_predictions(model, val_loader):
     model.eval()
-
-    total_tokens = 0
-    correct_tokens = 0
+    all_predictions = []
+    all_labels = []
 
     with torch.no_grad():
         for batch in val_loader:
+            batch = {key: value.to(device) for key, value in batch.items()}
+            outputs = model(
+                input_ids=batch["input_ids"],
+                attention_mask=batch["attention_mask"],
+                bbox=batch["bbox"],
+                pixel_values=batch["pixel_values"],
+            )
+
+            predictions = outputs.logits.argmax(dim=-1)
+            labels = batch["labels"]
+            valid_tokens = labels != -100
+            all_predictions.extend(predictions[valid_tokens].cpu().tolist())
+            all_labels.extend(labels[valid_tokens].cpu().tolist())
+
+        print("\nPer-label evaluation:")
+        print(
+            classification_report(
+                all_labels,
+                all_predictions,
+                labels=list(range(len(LABEL_LIST))),
+                target_names=LABEL_LIST,
+                zero_division=0,
+            )
+        )
+
+
+def inspect_total_predictions(model, val_loader, val_data, num_samples=10):
+    model.eval()
+    mistakes = 0
+
+    with torch.no_grad():
+        for sample_index, batch in enumerate(val_loader):
             batch = {key: value.to(device) for key, value in batch.items()}
 
             outputs = model(
@@ -188,15 +220,47 @@ def evaluate_predictions(model, val_loader):
             predictions = outputs.logits.argmax(dim=-1)
             labels = batch["labels"]
 
-            valid_tokens = labels != -100
+            total_id = LABEL_LIST.index("B-TOTAL")
 
-            correct_tokens += ((predictions == labels) & valid_tokens).sum().item()
+            # Look for the first actual TOTAL token in this receipt.
+            for token_index in range(predictions.shape[1]):
+                actual_id = labels[0, token_index].item()
 
-            total_tokens += valid_tokens.sum().item()
+                if actual_id != total_id:
+                    continue
 
-    accuracy = correct_tokens / total_tokens
+                predicted_id = predictions[0, token_index].item()
 
-    print(f"\nToken-level accuracy: {accuracy:.4f}")
+                if predicted_id == total_id:
+                    continue
+
+                print("\n" + "=" * 60)
+                print("TOTAL MISTAKE")
+                print("=" * 60)
+
+                print(f"Validation receipt: {sample_index}")
+                print(f"Model token position: {token_index}")
+                print(f"Actual:    {LABEL_LIST[actual_id]}")
+                print(f"Predicted: {LABEL_LIST[predicted_id]}")
+
+                print("\nOriginal OCR words:")
+
+                sample = val_data[sample_index]
+                words = sample.get("words", [])
+                ner_tags = sample.get("ner_tags", [])
+
+                for word, label in zip(words, ner_tags):
+                    if isinstance(label, int):
+                        label_name = LABEL_LIST[label]
+                    else:
+                        label_name = str(label)
+
+                    print(f"{word:<35} {label_name}")
+
+                mistakes += 1
+
+                if mistakes >= num_samples:
+                    return
 
 
 def create_model():
@@ -245,6 +309,11 @@ def main():
     val_loss = evaluate(model, val_loader)
     print(f"Validation loss: {val_loss:.4f}")
     evaluate_predictions(model, val_loader)
+    inspect_total_predictions(
+        model,
+        val_loader,
+        val_data,
+    )
     model.save_pretrained(CHECKPOINT_DIR)
     print(f"\nModel saved to: {CHECKPOINT_DIR}")
 
