@@ -15,21 +15,19 @@ The system combines OCR, document layout information, and visual information to 
 
 ## Pipeline
 
-```text
 Receipt Image
-      ↓
+↓
 PaddleOCR
-      ↓
+↓
 Text + Bounding Boxes
-      ↓
+↓
 Dataset Preparation
-      ↓
+↓
 LayoutLMv3
-      ↓
+↓
 Token Classification
-      ↓
+↓
 Extracted Receipt Fields
-```
 
 ## Tech Stack
 
@@ -44,26 +42,24 @@ Extracted Receipt Fields
 
 ## Project Structure
 
-```text
 ocr_project/
 ├── src/
-│   ├── dataset.py
-│   ├── dataset_generator.py
-│   ├── train.py
-│   ├── validate_dataset.py
-│   ├── ocr_engine.py
-│   ├── extraction/
-│   ├── ocr/
-│   └── parser/
+│ ├── dataset.py
+│ ├── dataset_generator.py
+│ ├── train.py
+│ ├── validate_dataset.py
+│ ├── ocr_engine.py
+│ ├── extraction/
+│ ├── ocr/
+│ └── parser/
 │
-├── data/              # Local datasets and receipt images
-├── models/            # Local trained model checkpoints
-├── output/            # Generated outputs
-├── checkpoints/       # Training checkpoints
+├── data/ # Local datasets and receipt images
+├── models/ # Local trained model checkpoints
+├── output/ # Generated outputs
+├── checkpoints/ # Training checkpoints
 │
 ├── .gitignore
 └── README.md
-```
 
 ## Dataset
 
@@ -81,7 +77,6 @@ The dataset is generated locally and is excluded from Git.
 
 The LayoutLMv3 model currently performs token classification using:
 
-```text
 O
 B-COMPANY
 I-COMPANY
@@ -91,7 +86,6 @@ B-ADDRESS
 I-ADDRESS
 B-TOTAL
 I-TOTAL
-```
 
 `B-` indicates the beginning of a field and `I-` indicates a continuation of the same field.
 
@@ -99,43 +93,31 @@ I-TOTAL
 
 Create and activate a Python 3.12 virtual environment:
 
-```bash
 python -m venv .venv
-```
 
 Windows PowerShell:
 
-```powershell
 .venv\Scripts\Activate.ps1
-```
 
 Install the required dependencies:
 
-```bash
 pip install -r requirements.txt
-```
 
 ## Generate the Dataset
 
 From the project root:
 
-```bash
 python -m src.dataset_generator
-```
 
 This generates the processed dataset locally under:
 
-```text
 data/processed_dataset.json
-```
 
 ## Validate the Dataset
 
 Run:
 
-```bash
 python -m src.validate_dataset
-```
 
 This performs basic checks on the generated field labels, including potential issues with TOTAL labels.
 
@@ -143,15 +125,11 @@ This performs basic checks on the generated field labels, including potential is
 
 Run:
 
-```bash
 python -m src.train
-```
 
 The trained model is saved locally under:
 
-```text
 models/
-```
 
 Model files are excluded from Git because of their size.
 
@@ -169,9 +147,7 @@ The project currently has a working prototype for:
 
 The next stage is to complete and test the **end-to-end inference pipeline**:
 
-```text
 Receipt Image → PaddleOCR → LayoutLMv3 → Extracted Fields
-```
 
 ## Notes
 

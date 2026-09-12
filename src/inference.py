@@ -9,6 +9,7 @@ from transformers import (
     LayoutLMv3ImageProcessor,
     LayoutLMv3Tokenizer,
 )
+from src.extraction.receipt_fields import extract_receipt_fields
 
 MODEL_PATH = "models/layoutlmv3_receipt_500"
 MODEL_NAME = "microsoft/layoutlmv3-base"
@@ -190,97 +191,33 @@ def predict_words(image_path):
 
         print(f"{word:<35} {label}")
 
-    fields = extract_fields(words, word_predictions)
-
-    print("\nEXTRACTED FIELDS")
-    print("=" * 60)
-    print(f"Company: {fields['company']}")
-    print(f"Date:    {fields['date']}")
-    print(f"Address: {fields['address']}")
-    print(f"Total:   {fields['total']}")
-
-    return fields
-
-
-def extract_fields(words, word_predictions):
-    """Convert word-level predictions into receipt fields."""
-    company_candidates = []
-    address_candidates = []
-    date_candidates = []
-    total_candidates = []
-
-    current_field = None
-    current_words = []
-
-    def save_current():
-        if not current_words or current_field is None:
-            return
-
-        value = " ".join(current_words)
-
-        if current_field == "company":
-            company_candidates.append(value)
-        elif current_field == "address":
-            address_candidates.append(value)
-        elif current_field == "date":
-            date_candidates.append(value)
-        elif current_field == "total":
-            total_candidates.append(value)
+    predictions = []
 
     for index, word in enumerate(words):
         label_id = word_predictions.get(index, 0)
         label = LABEL_LIST[label_id]
 
-        if label == "B-COMPANY":
-            save_current()
-            current_field = "company"
-            current_words = [word]
+        predictions.append(
+            {
+                "text": word,
+                "label": label,
+            }
+        )
 
-        elif label == "I-COMPANY" and current_field == "company":
-            current_words.append(word)
+    fields = extract_receipt_fields(predictions)
 
-        elif label == "B-DATE":
-            save_current()
-            current_field = "date"
-            current_words = [word]
+    print("\nEXTRACTED FIELDS")
+    print("=" * 60)
+    print(f"Company:       {fields['company']}")
+    print(f"Date:          {fields['date']}")
+    print(f"TIN:           {fields['tin']}")
+    print(f"Invoice No.:   {fields['invoice_number']}")
+    print(f"Vatable Sales: {fields['vatable_sales']}")
+    print(f"VAT Amount:    {fields['vat_amount']}")
+    print(f"Total:         {fields['total']}")
+    print(f"VAT Valid:     {'Yes' if fields['vat_valid'] else 'No'}")
 
-        elif label == "I-DATE" and current_field == "date":
-            current_words.append(word)
-
-        elif label == "B-ADDRESS":
-            save_current()
-            current_field = "address"
-            current_words = [word]
-
-        elif label == "I-ADDRESS" and current_field == "address":
-            current_words.append(word)
-
-        elif label == "B-TOTAL":
-            save_current()
-            current_field = "total"
-            current_words = [word]
-
-        else:
-            save_current()
-            current_field = None
-            current_words = []
-
-    save_current()
-
-    # Prefer the longest company candidate.
-    company = max(company_candidates, key=len, default="")
-
-    address = max(address_candidates, key=len, default="")
-    date = max(date_candidates, key=len, default="")
-
-    total = total_candidates[0] if total_candidates else ""
-
-    return {
-        "company": company,
-        "date": date,
-        "address": address,
-        "total": total,
-    }
+    return fields
 
 
 def main():
