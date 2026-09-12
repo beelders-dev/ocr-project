@@ -5,7 +5,6 @@ __pycache__/
 
 # Local data & datasets
 data/
-*.json
 
 # Model weights & output checkpoints
 models/
