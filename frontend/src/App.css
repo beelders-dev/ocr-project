@@ -252,16 +252,18 @@ button {
 ----------------------------- */
 
 .scanner-actions {
-  margin-top: 20px;
+  margin-top: 22px;
   text-align: center;
 }
 
 .primary-button {
   display: flex;
-  min-height: 56px;
+  width: 100%;
+  min-height: 58px;
   align-items: center;
   justify-content: center;
   gap: 10px;
+  border: 0;
   border-radius: 16px;
   background: #1e4d35;
   color: #ffffff;
@@ -283,20 +285,70 @@ button {
   display: none;
 }
 
+.secondary-button {
+  display: flex;
+  min-height: 52px;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  margin-top: 10px;
+  border: 1px solid #ccd5cd;
+  border-radius: 15px;
+  background: #ffffff;
+  color: #31533d;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 700;
+  transition:
+    background 0.2s ease,
+    transform 0.2s ease;
+}
+
+.secondary-button:hover {
+  background: #f5f8f5;
+  transform: translateY(-1px);
+}
+
+.secondary-button input {
+  display: none;
+}
+
+.secondary-icon {
+  background: #e8eee9;
+  color: #31533d;
+}
+
 .button-icon {
   display: grid;
-  width: 27px;
-  height: 27px;
+  width: 28px;
+  height: 28px;
   place-items: center;
-  border-radius: 8px;
+  border-radius: 9px;
   background: rgba(255, 255, 255, 0.14);
   font-size: 18px;
 }
 
+.gallery-button {
+  display: inline-block;
+  margin-top: 17px;
+  color: #31533d;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.gallery-button:hover {
+  text-decoration: underline;
+}
+
+.gallery-button input {
+  display: none;
+}
+
 .supported-text {
-  margin: 10px 0 0;
-  color: #879088;
-  font-size: 11px;
+  margin: 7px 0 0;
+  color: #8a938c;
+  font-size: 10px;
 }
 
 /* -----------------------------
@@ -645,4 +697,151 @@ footer strong {
     margin-right: auto;
     margin-left: auto;
   }
+}
+/* Camera */
+
+.camera-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  background: #101512;
+  color: white;
+}
+
+.camera-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 64px;
+  padding: 0 18px;
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.camera-close {
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.12);
+  color: white;
+  cursor: pointer;
+  font-size: 25px;
+  line-height: 1;
+}
+
+.camera-spacer {
+  width: 38px;
+}
+
+.camera-view {
+  position: relative;
+  display: flex;
+  flex: 1;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+.camera-view video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.camera-frame {
+  position: absolute;
+  width: min(78vw, 430px);
+  height: min(105vw, 560px);
+  pointer-events: none;
+}
+
+.camera-corner {
+  position: absolute;
+  width: 38px;
+  height: 38px;
+  border-color: #ffffff;
+  border-style: solid;
+}
+
+.camera-corner.top-left {
+  top: 0;
+  left: 0;
+  border-width: 3px 0 0 3px;
+}
+
+.camera-corner.top-right {
+  top: 0;
+  right: 0;
+  border-width: 3px 3px 0 0;
+}
+
+.camera-corner.bottom-left {
+  bottom: 0;
+  left: 0;
+  border-width: 0 0 3px 3px;
+}
+
+.camera-corner.bottom-right {
+  right: 0;
+  bottom: 0;
+  border-width: 0 3px 3px 0;
+}
+
+.camera-hint {
+  position: absolute;
+  bottom: 25px;
+  margin: 0;
+  padding: 8px 13px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.55);
+  color: white;
+  font-size: 11px;
+}
+
+.capture-button {
+  align-self: center;
+  width: 72px;
+  height: 72px;
+  margin: 20px 0 8px;
+  padding: 5px;
+  border: 4px solid white;
+  border-radius: 50%;
+  background: transparent;
+  cursor: pointer;
+}
+
+.capture-button span {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  background: white;
+  transition: transform 0.15s ease;
+}
+
+.capture-button:active span {
+  transform: scale(0.88);
+}
+
+.camera-action-label {
+  margin: 0 0 22px;
+  color: #d8ded9;
+  font-size: 12px;
+  text-align: center;
+}
+
+.camera-canvas {
+  display: none;
+}
+
+.camera-error {
+  margin: 20px;
+  padding: 14px;
+  border-radius: 12px;
+  background: rgba(255, 100, 100, 0.15);
+  color: #ffb5b5;
+  font-size: 13px;
+  text-align: center;
 }

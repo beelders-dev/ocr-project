@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import "./App.css";
 
 function App() {
@@ -6,6 +6,81 @@ function App() {
   const [result, setResult] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+  const [cameraOpen, setCameraOpen] = useState(false);
+  const [cameraError, setCameraError] = useState(null);
+
+  const videoRef = useRef(null);
+  const canvasRef = useRef(null);
+  const streamRef = useRef(null);
+
+  async function openCamera() {
+    setCameraError(null);
+    setCameraOpen(true);
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          facingMode: {
+            ideal: "environment",
+          },
+        },
+        audio: false,
+      });
+
+      streamRef.current = stream;
+
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+      }
+    } catch (error) {
+      console.error("Camera error:", error);
+      setCameraError(
+        "Unable to access the camera. Please check your browser permission.",
+      );
+    }
+  }
+
+  function closeCamera() {
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach((track) => track.stop());
+      streamRef.current = null;
+    }
+
+    setCameraOpen(false);
+    setCameraError(null);
+  }
+
+  function capturePhoto() {
+    const video = videoRef.current;
+    const canvas = canvasRef.current;
+
+    if (!video || !canvas) return;
+
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+
+    const context = canvas.getContext("2d");
+
+    context.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+    canvas.toBlob(
+      (blob) => {
+        if (!blob) return;
+
+        const file = new File([blob], `receipt-${Date.now()}.jpg`, {
+          type: "image/jpeg",
+        });
+
+        setImage(file);
+        setResult(null);
+        setError(null);
+
+        closeCamera();
+      },
+      "image/jpeg",
+      0.92,
+    );
+  }
 
   function handleImageChange(event) {
     const file = event.target.files[0];
@@ -58,6 +133,46 @@ function App() {
 
   return (
     <main className="app">
+      {cameraOpen && (
+        <div className="camera-overlay">
+          <div className="camera-header">
+            <button className="camera-close" onClick={closeCamera}>
+              ×
+            </button>
+
+            <span>Scan Receipt</span>
+
+            <div className="camera-spacer"></div>
+          </div>
+
+          <div className="camera-view">
+            <video ref={videoRef} autoPlay playsInline muted />
+
+            <div className="camera-frame">
+              <span className="camera-corner top-left"></span>
+              <span className="camera-corner top-right"></span>
+              <span className="camera-corner bottom-left"></span>
+              <span className="camera-corner bottom-right"></span>
+            </div>
+
+            <p className="camera-hint">Position the receipt inside the frame</p>
+          </div>
+
+          {cameraError ? (
+            <div className="camera-error">{cameraError}</div>
+          ) : (
+            <button className="capture-button" onClick={capturePhoto}>
+              <span></span>
+            </button>
+          )}
+
+          <p className="camera-action-label">
+            {cameraError ? "Camera unavailable" : "Capture"}
+          </p>
+
+          <canvas ref={canvasRef} className="camera-canvas" />
+        </div>
+      )}
       <header className="topbar">
         <div className="brand">
           <div className="brand-mark">R</div>
@@ -115,9 +230,13 @@ function App() {
           </div>
 
           <div className="scanner-actions">
-            <label className="primary-button">
-              <span className="button-icon">↑</span>
-              Upload Receipt
+            <button className="primary-button" onClick={openCamera}>
+              <span className="button-icon">⌾</span>
+              <span>Scan Receipt</span>
+            </button>
+
+            <label className="gallery-button">
+              Upload from Gallery
               <input
                 type="file"
                 accept="image/*"
@@ -125,9 +244,7 @@ function App() {
               />
             </label>
 
-            <p className="supported-text">
-              JPG, PNG or HEIC · Take a clear photo
-            </p>
+            <p className="supported-text">JPG, PNG or HEIC</p>
           </div>
         </section>
       )}
