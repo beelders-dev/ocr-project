@@ -92,135 +92,148 @@ def predict_words(image_path):
     model, tokenizer, image_processor = load_model()
 
     processed_image_path = resize_image_if_needed(image_path)
+    temporary_image = processed_image_path != image_path
 
-    image = Image.open(processed_image_path).convert("RGB")
-    width, height = image.size
+    try:
+        image = Image.open(processed_image_path).convert("RGB")
+        width, height = image.size
 
-    words, pixel_boxes = run_ocr(processed_image_path)
+        words, pixel_boxes = run_ocr(processed_image_path)
 
-    normalized_boxes = [normalize_box(box, width, height) for box in pixel_boxes]
+        normalized_boxes = [normalize_box(box, width, height) for box in pixel_boxes]
 
-    # Keep this consistent with the training dataset.
-    max_words = 250
-    words = words[:max_words]
-    normalized_boxes = normalized_boxes[:max_words]
+        # Keep this consistent with the training dataset.
+        max_words = 250
+        words = words[:max_words]
+        normalized_boxes = normalized_boxes[:max_words]
 
-    token_ids = []
-    token_boxes = []
-    word_indices = []
+        token_ids = []
+        token_boxes = []
+        word_indices = []
 
-    for word_index, (word, box) in enumerate(zip(words, normalized_boxes)):
-        encoded = tokenizer(
-            [word],
-            boxes=[box],
-            add_special_tokens=False,
+        for word_index, (word, box) in enumerate(zip(words, normalized_boxes)):
+            encoded = tokenizer(
+                [word],
+                boxes=[box],
+                add_special_tokens=False,
+            )
+
+            subword_ids = encoded["input_ids"]
+
+            # Handle tokenizers that return [[...]] instead of [...].
+            if subword_ids and isinstance(subword_ids[0], list):
+                subword_ids = subword_ids[0]
+
+            if not subword_ids:
+                subword_ids = [tokenizer.unk_token_id or 0]
+
+            for subword_id in subword_ids:
+                token_ids.append(subword_id)
+                token_boxes.append(box)
+                word_indices.append(word_index)
+
+        # Match the maximum sequence length used during training.
+        max_tokens = 512 - 2
+
+        token_ids = token_ids[:max_tokens]
+        token_boxes = token_boxes[:max_tokens]
+        word_indices = word_indices[:max_tokens]
+
+        bos_token_id = (
+            tokenizer.bos_token_id if tokenizer.bos_token_id is not None else 0
         )
 
-        subword_ids = encoded["input_ids"]
-
-        # Handle tokenizers that return [[...]] instead of [...].
-        if subword_ids and isinstance(subword_ids[0], list):
-            subword_ids = subword_ids[0]
-
-        if not subword_ids:
-            subword_ids = [tokenizer.unk_token_id or 0]
-
-        for subword_id in subword_ids:
-            token_ids.append(subword_id)
-            token_boxes.append(box)
-            word_indices.append(word_index)
-
-    # Match the maximum sequence length used during training.
-    max_tokens = 512 - 2
-
-    token_ids = token_ids[:max_tokens]
-    token_boxes = token_boxes[:max_tokens]
-    word_indices = word_indices[:max_tokens]
-
-    bos_token_id = tokenizer.bos_token_id if tokenizer.bos_token_id is not None else 0
-
-    eos_token_id = tokenizer.eos_token_id if tokenizer.eos_token_id is not None else 2
-
-    input_ids = [bos_token_id] + token_ids + [eos_token_id]
-    bbox = [[0, 0, 0, 0]] + token_boxes + [[1000, 1000, 1000, 1000]]
-
-    attention_mask = [1] * len(input_ids)
-
-    image_encoding = image_processor(
-        images=image,
-        return_tensors="pt",
-    )
-
-    inputs = {
-        "input_ids": torch.tensor(
-            [input_ids],
-            dtype=torch.long,
-        ),
-        "attention_mask": torch.tensor(
-            [attention_mask],
-            dtype=torch.long,
-        ),
-        "bbox": torch.tensor(
-            [bbox],
-            dtype=torch.long,
-        ),
-        "pixel_values": image_encoding["pixel_values"],
-    }
-
-    with torch.no_grad():
-        outputs = model(**inputs)
-
-    predictions = outputs.logits.argmax(dim=-1)[0].tolist()
-
-    # Ignore BOS because the first prediction belongs to the first token.
-    token_predictions = predictions[1 : len(token_ids) + 1]
-
-    # Keep only the prediction from the first subword of each word.
-    word_predictions = {}
-
-    for word_index, prediction in zip(
-        word_indices,
-        token_predictions,
-    ):
-        if word_index not in word_predictions:
-            word_predictions[word_index] = prediction
-
-    print("\nWORD-LEVEL PREDICTIONS")
-    print("=" * 60)
-
-    for index, word in enumerate(words):
-        label_id = word_predictions.get(index, 0)
-        label = LABEL_LIST[label_id]
-
-        print(f"{word:<35} {label}")
-
-    predictions = []
-
-    for index, word in enumerate(words):
-        label_id = word_predictions.get(index, 0)
-        label = LABEL_LIST[label_id]
-
-        predictions.append(
-            {
-                "text": word,
-                "label": label,
-            }
+        eos_token_id = (
+            tokenizer.eos_token_id if tokenizer.eos_token_id is not None else 2
         )
 
-    fields = extract_receipt_fields(predictions)
+        input_ids = [bos_token_id] + token_ids + [eos_token_id]
+        bbox = [[0, 0, 0, 0]] + token_boxes + [[1000, 1000, 1000, 1000]]
 
-    print("\nEXTRACTED FIELDS")
-    print("=" * 60)
-    print(f"Company:       {fields['company']}")
-    print(f"Date:          {fields['date']}")
-    print(f"TIN:           {fields['tin']}")
-    print(f"Invoice No.:   {fields['invoice_number']}")
-    print(f"Vatable Sales: {fields['vatable_sales']}")
-    print(f"VAT Amount:    {fields['vat_amount']}")
-    print(f"Total:         {fields['total']}")
-    print(f"VAT Valid:     {'Yes' if fields['vat_valid'] else 'No'}")
+        attention_mask = [1] * len(input_ids)
 
-    return fields
+        image_encoding = image_processor(
+            images=image,
+            return_tensors="pt",
+        )
+
+        inputs = {
+            "input_ids": torch.tensor(
+                [input_ids],
+                dtype=torch.long,
+            ),
+            "attention_mask": torch.tensor(
+                [attention_mask],
+                dtype=torch.long,
+            ),
+            "bbox": torch.tensor(
+                [bbox],
+                dtype=torch.long,
+            ),
+            "pixel_values": image_encoding["pixel_values"],
+        }
+
+        with torch.no_grad():
+            outputs = model(**inputs)
+
+        predictions = outputs.logits.argmax(dim=-1)[0].tolist()
+
+        # Ignore BOS because the first prediction belongs to the first token.
+        token_predictions = predictions[1 : len(token_ids) + 1]
+
+        # Keep only the prediction from the first subword of each word.
+        word_predictions = {}
+
+        for word_index, prediction in zip(
+            word_indices,
+            token_predictions,
+        ):
+            if word_index not in word_predictions:
+                word_predictions[word_index] = prediction
+
+        print("\nWORD-LEVEL PREDICTIONS")
+        print("=" * 60)
+
+        for index, word in enumerate(words):
+            label_id = word_predictions.get(index, 0)
+            label = LABEL_LIST[label_id]
+
+            print(f"{word:<35} {label}")
+
+        predictions = []
+
+        for index, word in enumerate(words):
+            label_id = word_predictions.get(index, 0)
+            label = LABEL_LIST[label_id]
+
+            predictions.append(
+                {
+                    "text": word,
+                    "label": label,
+                }
+            )
+
+        fields = extract_receipt_fields(predictions)
+
+        print("\nEXTRACTED FIELDS")
+        print("=" * 60)
+        print(f"Company:       {fields['company']}")
+        print(f"Date:          {fields['date']}")
+        print(f"TIN:           {fields['tin']}")
+        print(f"Invoice No.:   {fields['invoice_number']}")
+        print(f"Vatable Sales: {fields['vatable_sales']}")
+        print(f"VAT Amount:    {fields['vat_amount']}")
+        print(f"Total:         {fields['total']}")
+        print(f"VAT Valid:     {'Yes' if fields['vat_valid'] else 'No'}")
+
+        return fields
+
+    finally:
+        if temporary_image:
+            try:
+                os.remove(processed_image_path)
+            except FileNotFoundError:
+                pass
 
 
 def main():

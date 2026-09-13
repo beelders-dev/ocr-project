@@ -1,4 +1,5 @@
 from pathlib import Path
+import tempfile
 
 from PIL import Image
 
@@ -37,8 +38,11 @@ def resize_image_if_needed(
             Image.Resampling.LANCZOS,
         )
 
-        output_path = path.with_name(f"{path.stem}_resized{path.suffix}")
-
-        resized.save(output_path)
+        with tempfile.NamedTemporaryFile(
+            suffix=path.suffix,
+            delete=False,
+        ) as temp_file:
+            output_path = Path(temp_file.name)
+            resized.save(output_path)
 
     return str(output_path)
