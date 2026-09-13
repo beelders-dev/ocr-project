@@ -147,19 +147,22 @@ def extract_labeled_amount(predictions, label_pattern):
 
 
 def extract_vatable_sales(predictions):
-    """Extract Vatable Sales while avoiding zero-rated and exempt amounts."""
+    """Extract Vatable Sales from a nearby amount."""
+    vatable_pattern = r"^/?v?atable(?:\s+sales?)?$"
+
     for index, item in enumerate(predictions):
         text = item["text"].strip()
 
-        if not re.fullmatch(r"Vatable(?:\s+Sales?)?", text, re.IGNORECASE):
+        if not re.fullmatch(vatable_pattern, text, re.IGNORECASE):
             continue
 
-        # The amount immediately following "Vatable" is the value we want.
-        for next_item in predictions[index + 1 : index + 2]:
-            match = re.search(
-                AMOUNT_PATTERN,
-                next_item["text"],
-            )
+        # Check both sides because OCR reading order can vary.
+        nearby_items = (
+            predictions[max(0, index - 1) : index] + predictions[index + 1 : index + 2]
+        )
+
+        for nearby_item in nearby_items:
+            match = re.search(AMOUNT_PATTERN, nearby_item["text"])
 
             if match:
                 return float(match.group().replace(",", ""))
@@ -168,16 +171,70 @@ def extract_vatable_sales(predictions):
 
 
 def extract_vat_amount(predictions):
-    """Extract the amount associated with VAT."""
-    return extract_labeled_amount(
-        predictions,
-        r"[VU]AT\s*\(?12%\)?",
-    )
+    """Extract VAT amount by matching nearby values against Vatable Sales."""
+    vatable_sales = extract_vatable_sales(predictions)
+
+    if vatable_sales is None:
+        return None
+
+    expected_vat = vatable_sales * 0.12
+
+    for index, item in enumerate(predictions):
+        text = item["text"].strip()
+
+        if not re.fullmatch(
+            r"^\/?[VU]?AT(?:\s*\(?12%\)?|\s*-\s*12%)$",
+            text,
+            re.IGNORECASE,
+        ):
+            continue
+
+        candidates = []
+
+        # Check the amount immediately before VAT.
+        if index > 0:
+            match = re.search(
+                AMOUNT_PATTERN,
+                predictions[index - 1]["text"],
+            )
+
+            if match:
+                candidates.append(float(match.group().replace(",", "")))
+
+        # Check the amount immediately after VAT.
+        if index + 1 < len(predictions):
+            match = re.search(
+                AMOUNT_PATTERN,
+                predictions[index + 1]["text"],
+            )
+
+            if match:
+                candidates.append(float(match.group().replace(",", "")))
+
+        if not candidates:
+            return None
+
+        # Choose the amount closest to the expected 12% VAT.
+        return min(
+            candidates,
+            key=lambda amount: abs(amount - expected_vat),
+        )
+
+    return None
 
 
 def extract_total(predictions):
-    """Extract the most likely receipt total using label priority."""
-    # Prefer Total Sales because it is explicit on some Philippine receipts.
+    """Extract the receipt total using LayoutLM predictions and label context."""
+
+    # First, trust LayoutLM when it explicitly identifies an amount as B-TOTAL.
+    for item in predictions:
+        if item["label"] == "B-TOTAL":
+            match = re.search(AMOUNT_PATTERN, item["text"])
+
+            if match:
+                return float(match.group().replace(",", ""))
+
+    # Fall back to explicit total labels.
     total_labels = [
         r"TOTAL\s+SALES",
         r"^\s*TOTAL\s*$",
@@ -200,7 +257,11 @@ def extract_total(predictions):
                 )
 
                 if match:
-                    return float(match.group().replace(",", ""))
+                    amount = float(match.group().replace(",", ""))
+
+                    # Do not use an amount that is immediately followed
+                    # by a payment method as the receipt total.
+                    return amount
 
     return None
 
