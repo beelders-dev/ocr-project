@@ -14,13 +14,14 @@ class ReceiptProcessView(APIView):
         serializer.is_valid(raise_exception=True)
 
         image = serializer.validated_data["image"]
-
         suffix = os.path.splitext(image.name)[1]
 
-        with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as temp_file:
+        with tempfile.NamedTemporaryFile(
+            suffix=suffix,
+            delete=False,
+        ) as temp_file:
             for chunk in image.chunks():
                 temp_file.write(chunk)
-
             temp_path = temp_file.name
 
         try:
@@ -33,5 +34,15 @@ class ReceiptProcessView(APIView):
                 }
             )
 
+        except Exception:
+            return Response(
+                {
+                    "success": False,
+                    "error": "Failed to process receipt.",
+                },
+                status=500,
+            )
+
         finally:
-            os.remove(temp_path)
+            if os.path.exists(temp_path):
+                os.remove(temp_path)

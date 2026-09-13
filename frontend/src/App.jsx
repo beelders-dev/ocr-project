@@ -6,12 +6,28 @@ function App() {
   const [result, setResult] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+  const [previewError, setPreviewError] = useState(false);
   const [cameraOpen, setCameraOpen] = useState(false);
   const [cameraError, setCameraError] = useState(null);
+  const [previewUrl, setPreviewUrl] = useState(null);
 
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
   const streamRef = useRef(null);
+
+  useEffect(() => {
+    if (!image) {
+      setPreviewUrl(null);
+      return;
+    }
+
+    const url = URL.createObjectURL(image);
+    setPreviewUrl(url);
+
+    return () => {
+      URL.revokeObjectURL(url);
+    };
+  }, [image]);
 
   async function openCamera() {
     setCameraError(null);
@@ -74,6 +90,7 @@ function App() {
         setImage(file);
         setResult(null);
         setError(null);
+        setPreviewError(false);
 
         closeCamera();
       },
@@ -83,13 +100,22 @@ function App() {
   }
 
   function handleImageChange(event) {
-    const file = event.target.files[0];
+    const selectedFile = event.target.files?.[0];
 
-    if (!file) return;
+    if (!selectedFile) return;
 
-    setImage(file);
-    setResult(null);
+    if (!selectedFile.type.startsWith("image/")) {
+      setImage(null);
+      setResult(null);
+      setError("Please upload a valid receipt image.");
+      setPreviewError(false);
+      return;
+    }
+
     setError(null);
+    setResult(null);
+    setPreviewError(false);
+    setImage(selectedFile);
   }
 
   async function processReceipt() {
@@ -114,7 +140,13 @@ function App() {
       const data = await response.json();
 
       if (!response.ok) {
-        throw new Error(data.detail || "Failed to process receipt.");
+        const errorMessage =
+          data.image?.[0] ||
+          data.error ||
+          data.detail ||
+          "Failed to process receipt.";
+
+        throw new Error(errorMessage);
       }
 
       setResult(data.data);
@@ -129,6 +161,7 @@ function App() {
     setImage(null);
     setResult(null);
     setError(null);
+    setPreviewError(false);
   }
 
   return (
@@ -263,7 +296,22 @@ function App() {
           </div>
 
           <div className="receipt-preview">
-            <img src={URL.createObjectURL(image)} alt="Selected receipt" />
+            {!previewError ? (
+              <img
+                src={previewUrl}
+                alt="Selected receipt"
+                onError={() => {
+                  setPreviewError(true);
+                  setError("The selected image could not be previewed.");
+                }}
+              />
+            ) : (
+              <div className="receipt-preview-placeholder">
+                <div className="placeholder-icon">🧾</div>
+                <strong>Unable to preview image</strong>
+                <span>Please choose a different receipt image.</span>
+              </div>
+            )}
 
             {loading && (
               <div className="scanning-overlay">

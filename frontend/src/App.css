@@ -845,3 +845,38 @@ footer strong {
   font-size: 13px;
   text-align: center;
 }
+
+.receipt-preview-placeholder {
+  min-height: 320px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 32px;
+  text-align: center;
+  background: #f4f7f4;
+}
+
+.receipt-preview-placeholder .placeholder-icon {
+  display: grid;
+  width: 58px;
+  height: 58px;
+  place-items: center;
+  margin-bottom: 14px;
+  border-radius: 16px;
+  background: #e3ece5;
+  font-size: 28px;
+}
+
+.receipt-preview-placeholder strong {
+  color: #31533d;
+  font-size: 14px;
+}
+
+.receipt-preview-placeholder span {
+  max-width: 240px;
+  margin-top: 6px;
+  color: #7d877f;
+  font-size: 11px;
+  line-height: 1.5;
+}
