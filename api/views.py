@@ -26,7 +26,12 @@ class ReceiptProcessView(APIView):
         try:
             fields = predict_words(temp_path)
 
-            return Response(fields)
+            return Response(
+                {
+                    "success": True,
+                    "data": fields,
+                }
+            )
 
         finally:
             os.remove(temp_path)
