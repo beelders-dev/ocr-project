@@ -10,6 +10,7 @@ from transformers import (
     LayoutLMv3Tokenizer,
 )
 from src.extraction.receipt_fields import extract_receipt_fields
+from src.preprocessing.image import resize_image_if_needed
 
 MODEL_PATH = "models/layoutlmv3_receipt_500"
 MODEL_NAME = "microsoft/layoutlmv3-base"
@@ -90,10 +91,12 @@ def predict_words(image_path):
     """Predict one LayoutLMv3 label for each original OCR word."""
     model, tokenizer, image_processor = load_model()
 
-    image = Image.open(image_path).convert("RGB")
+    processed_image_path = resize_image_if_needed(image_path)
+
+    image = Image.open(processed_image_path).convert("RGB")
     width, height = image.size
 
-    words, pixel_boxes = run_ocr(image_path)
+    words, pixel_boxes = run_ocr(processed_image_path)
 
     normalized_boxes = [normalize_box(box, width, height) for box in pixel_boxes]
 
