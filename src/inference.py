@@ -1,5 +1,6 @@
 import os
 import sys
+import time
 
 import torch
 from PIL import Image
@@ -89,16 +90,26 @@ def run_ocr(image_path):
 
 def predict_words(image_path):
     """Predict one LayoutLMv3 label for each original OCR word."""
+    total_start = time.perf_counter()
     model, tokenizer, image_processor = load_model()
+    model_load_time = time.perf_counter() - total_start
+
+    resize_start = time.perf_counter()
 
     processed_image_path = resize_image_if_needed(image_path)
+
+    resize_time = time.perf_counter() - resize_start
     temporary_image = processed_image_path != image_path
 
     try:
         image = Image.open(processed_image_path).convert("RGB")
         width, height = image.size
 
+        ocr_start = time.perf_counter()
+
         words, pixel_boxes = run_ocr(processed_image_path)
+
+        ocr_time = time.perf_counter() - ocr_start
 
         normalized_boxes = [normalize_box(box, width, height) for box in pixel_boxes]
 
@@ -173,8 +184,12 @@ def predict_words(image_path):
             "pixel_values": image_encoding["pixel_values"],
         }
 
+        inference_start = time.perf_counter()
+
         with torch.no_grad():
             outputs = model(**inputs)
+
+        inference_time = time.perf_counter() - inference_start
 
         predictions = outputs.logits.argmax(dim=-1)[0].tolist()
 
@@ -225,6 +240,16 @@ def predict_words(image_path):
         print(f"VAT Amount:    {fields['vat_amount']}")
         print(f"Total:         {fields['total']}")
         print(f"VAT Valid:     {'Yes' if fields['vat_valid'] else 'No'}")
+
+        total_time = time.perf_counter() - total_start
+
+        print("\nPERFORMANCE")
+        print("=" * 60)
+        print(f"Model loading:   {model_load_time:.2f}s")
+        print(f"Image resizing:  {resize_time:.2f}s")
+        print(f"PaddleOCR:       {ocr_time:.2f}s")
+        print(f"LayoutLMv3:      {inference_time:.2f}s")
+        print(f"Total:           {total_time:.2f}s")
 
         return fields
 
