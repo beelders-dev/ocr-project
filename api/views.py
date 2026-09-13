@@ -1,7 +1,11 @@
+import os
+import tempfile
+
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from .serializers import ReceiptUploadSerializer
+from src.inference import predict_words
 
 
 class ReceiptProcessView(APIView):
@@ -11,9 +15,18 @@ class ReceiptProcessView(APIView):
 
         image = serializer.validated_data["image"]
 
-        return Response(
-            {
-                "message": "Receipt received successfully.",
-                "filename": image.name,
-            }
-        )
+        suffix = os.path.splitext(image.name)[1]
+
+        with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as temp_file:
+            for chunk in image.chunks():
+                temp_file.write(chunk)
+
+            temp_path = temp_file.name
+
+        try:
+            fields = predict_words(temp_path)
+
+            return Response(fields)
+
+        finally:
+            os.remove(temp_path)
