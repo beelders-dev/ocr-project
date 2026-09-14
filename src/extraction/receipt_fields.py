@@ -179,6 +179,15 @@ def extract_labeled_amount(predictions, label_pattern):
 
 def extract_vatable_sales(predictions):
     """Extract Vatable Sales from an amount associated with its label."""
+
+    # Some receipts use (T) to identify Vatable Sales.
+    for index, item in enumerate(predictions):
+        if item["text"].strip() == "(T)":
+            for nearby_item in predictions[index + 1 : index + 3]:
+                amount = extract_amount(nearby_item["text"])
+                if amount is not None:
+                    return amount
+
     vatable_patterns = [
         r"^/?v?atable(?:\s+sales?)?$",
         r"^vat\s+sales$",
@@ -194,17 +203,13 @@ def extract_vatable_sales(predictions):
         ):
             continue
 
-        # Prefer amounts appearing after the label.
         for nearby_item in predictions[index + 1 : index + 4]:
             amount = extract_amount(nearby_item["text"])
-
             if amount is not None:
                 return amount
 
-        # Fall back to amounts before the label when OCR order is reversed.
         for nearby_item in predictions[max(0, index - 2) : index]:
             amount = extract_amount(nearby_item["text"])
-
             if amount is not None:
                 return amount
 
@@ -216,7 +221,7 @@ def extract_vat_amount(predictions):
     vat_patterns = [
         r"^/?vat$",
         r"^/?vat\s+amount$",
-        r"^/?vat\s*(?:[-:]|\(12%\)|12%)?$",
+        r"^/?vat\s*(?:[-:]?\s*(?:\(12%\)|12%))?$",
         r"^12%\s+vat$",
         r"^plus\s+vat\s+amount$",
     ]
@@ -229,34 +234,35 @@ def extract_vat_amount(predictions):
         ):
             continue
 
-        # Prefer amounts appearing after the VAT label.
         candidates = []
 
-        for nearby_item in predictions[index + 1 : index + 4]:
+        # Check amounts before the VAT label.
+        for nearby_item in predictions[max(0, index - 2) : index]:
             amount = extract_amount(nearby_item["text"])
-
             if amount is not None:
                 candidates.append(amount)
 
-        if candidates:
-            vatable_sales = extract_vatable_sales(predictions)
-
-            if vatable_sales is not None:
-                expected_vat = vatable_sales * 0.12
-
-                return min(
-                    candidates,
-                    key=lambda amount: abs(amount - expected_vat),
-                )
-
-            return candidates[0]
-
-        # Fall back to amounts before the label.
-        for nearby_item in predictions[max(0, index - 2) : index]:
+        # Check amounts after the VAT label.
+        for nearby_item in predictions[index + 1 : index + 4]:
             amount = extract_amount(nearby_item["text"])
-
             if amount is not None:
-                return amount
+                candidates.append(amount)
+
+        if not candidates:
+            continue
+
+        # Prefer the amount closest to 12% of Vatable Sales.
+        vatable_sales = extract_vatable_sales(predictions)
+
+        if vatable_sales is not None:
+            expected_vat = vatable_sales * 0.12
+
+            return min(
+                candidates,
+                key=lambda amount: abs(amount - expected_vat),
+            )
+
+        return candidates[0]
 
     return None
 
@@ -297,6 +303,13 @@ def extract_total(predictions):
 
         if amount is not None:
             return amount
+
+    # Fall back to Vatable Sales + VAT when no explicit total is found.
+    vatable_sales = extract_vatable_sales(predictions)
+    vat_amount = extract_vat_amount(predictions)
+
+    if vatable_sales is not None and vat_amount is not None:
+        return round(vatable_sales + vat_amount, 2)
 
     return None
 
