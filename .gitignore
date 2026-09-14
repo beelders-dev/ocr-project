@@ -13,3 +13,5 @@ checkpoints/
 
 # VS Code directory
 .vscode/
+
+model.zip
