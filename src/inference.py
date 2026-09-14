@@ -240,6 +240,7 @@ def predict_words(image_path):
         print(f"VAT Amount:    {fields['vat_amount']}")
         print(f"Total:         {fields['total']}")
         print(f"VAT Valid:     {'Yes' if fields['vat_valid'] else 'No'}")
+        print(f"Total Valid:   {'Yes' if fields['total_valid'] else 'No'}")
 
         total_time = time.perf_counter() - total_start
 

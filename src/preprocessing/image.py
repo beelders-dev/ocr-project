@@ -3,7 +3,7 @@ import tempfile
 
 from PIL import Image
 
-MAX_IMAGE_SIZE = 4000
+MAX_IMAGE_SIZE = 3300
 
 
 def resize_image_if_needed(
