@@ -34,11 +34,15 @@ class ReceiptProcessView(APIView):
                 }
             )
 
-        except Exception:
+        except Exception as e:
+            import traceback
+
+            traceback.print_exc()
+
             return Response(
                 {
                     "success": False,
-                    "error": "Failed to process receipt.",
+                    "error": str(e),
                 },
                 status=500,
             )
