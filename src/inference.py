@@ -13,7 +13,10 @@ from transformers import (
 from src.extraction.receipt_fields import extract_receipt_fields
 from src.preprocessing.image import resize_image_if_needed
 
-MODEL_PATH = "models/layoutlmv3_receipt_500"
+MODEL_PATH = os.environ.get(
+    "MODEL_PATH",
+    "models/layoutlmv3_receipt_500",
+)
 MODEL_NAME = "microsoft/layoutlmv3-base"
 
 LABEL_LIST = [
