@@ -30,6 +30,8 @@ LABEL_LIST = [
 
 
 OCR_ENGINE = PaddleOCR(
+    use_doc_orientation_classify=False,
+    use_doc_unwarping=False,
     use_textline_orientation=False,
     lang="en",
     device="cpu",
