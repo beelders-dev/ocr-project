@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useReceiptScanner } from "./useReceiptScanner";
+import * as XLSX from "xlsx";
 
 import "./App.css";
 
@@ -123,6 +124,28 @@ function App() {
     } finally {
       setLoading(false);
     }
+  }
+
+  function downloadExcel() {
+    if (!result) return;
+
+    const row = {
+      Company: result.company || "",
+      Date: result.date || "",
+      TIN: result.tin || "",
+      "Invoice Number": result.invoice_number || "",
+      "VATable Sales": result.vatable_sales ?? "",
+      "VAT Amount": result.vat_amount ?? "",
+      Total: result.total ?? "",
+      "VAT Valid": result.vat_valid ? "Yes" : "No",
+    };
+
+    const worksheet = XLSX.utils.json_to_sheet([row]);
+    const workbook = XLSX.utils.book_new();
+
+    XLSX.utils.book_append_sheet(workbook, worksheet, "Receipt");
+
+    XLSX.writeFile(workbook, `receipt-${Date.now()}.xlsx`);
   }
 
   function resetReceipt() {
@@ -344,6 +367,10 @@ function App() {
               </small>
             </div>
           </div>
+          <button className="download-excel-button" onClick={downloadExcel}>
+            <span>↓</span>
+            <span>Download Excel</span>
+          </button>
 
           <button className="scan-again-button" onClick={resetReceipt}>
             Scan another receipt
