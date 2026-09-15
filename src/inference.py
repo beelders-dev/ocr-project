@@ -1,7 +1,9 @@
 import os
 import sys
 import time
-import gc
+import ast
+import subprocess
+
 
 import torch
 from PIL import Image
@@ -62,42 +64,41 @@ def normalize_box(box, width, height):
 
 
 def run_ocr(image_path):
-    """Run PaddleOCR and return OCR words with their bounding boxes."""
-    ocr_engine = PaddleOCR(
-        text_detection_model_name="PP-OCRv5_mobile_det",
-        text_recognition_model_name="PP-OCRv5_mobile_rec",
-        use_doc_orientation_classify=False,
-        use_doc_unwarping=False,
-        use_textline_orientation=False,
-        lang="en",
-        device="cpu",
-        enable_mkldnn=False,
+    """Run PaddleOCR in a separate process and return OCR words with boxes."""
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "src.ocr_worker",
+            image_path,
+        ],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
     )
 
-    try:
-        result = ocr_engine.predict(image_path)
+    if result.returncode != 0:
+        print("OCR WORKER FAILED")
+        print("STDOUT:")
+        print(result.stdout)
+        print("STDERR:")
+        print(result.stderr)
 
-        words = []
-        boxes = []
+        raise RuntimeError("OCR worker failed")
 
-        for res in result:
-            rec_texts = res.get("rec_texts", [])
-            rec_boxes = res.get("rec_boxes", [])
+    words = []
+    boxes = []
 
-            for text, box in zip(rec_texts, rec_boxes):
-                text = str(text).strip()
+    for line in result.stdout.splitlines():
+        if "\t" not in line:
+            continue
 
-                if not text:
-                    continue
+        text, box_text = line.split("\t", 1)
 
-                words.append(text)
-                boxes.append(box.tolist() if hasattr(box, "tolist") else box)
+        words.append(text)
+        boxes.append(ast.literal_eval(box_text))
 
-        return words, boxes
-
-    finally:
-        del ocr_engine
-        gc.collect()
+    return words, boxes
 
 
 def predict_words(image_path):
