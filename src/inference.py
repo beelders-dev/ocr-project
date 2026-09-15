@@ -79,6 +79,7 @@ def run_ocr(image_path):
 
     if result.returncode != 0:
         print("OCR WORKER FAILED")
+        print("RETURN CODE:", result.returncode)
         print("STDOUT:")
         print(result.stdout)
         print("STDERR:")
