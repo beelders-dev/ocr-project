@@ -1,6 +1,7 @@
 import os
 import sys
 import time
+import gc
 
 import torch
 from PIL import Image
@@ -30,18 +31,6 @@ LABEL_LIST = [
     "B-TOTAL",
     "I-TOTAL",
 ]
-
-
-OCR_ENGINE = PaddleOCR(
-    text_detection_model_name="PP-OCRv5_mobile_det",
-    text_recognition_model_name="PP-OCRv5_mobile_rec",
-    use_doc_orientation_classify=False,
-    use_doc_unwarping=False,
-    use_textline_orientation=False,
-    lang="en",
-    device="cpu",
-    enable_mkldnn=False,
-)
 
 
 def load_model():
@@ -74,25 +63,41 @@ def normalize_box(box, width, height):
 
 def run_ocr(image_path):
     """Run PaddleOCR and return OCR words with their bounding boxes."""
-    result = OCR_ENGINE.predict(image_path)
+    ocr_engine = PaddleOCR(
+        text_detection_model_name="PP-OCRv5_mobile_det",
+        text_recognition_model_name="PP-OCRv5_mobile_rec",
+        use_doc_orientation_classify=False,
+        use_doc_unwarping=False,
+        use_textline_orientation=False,
+        lang="en",
+        device="cpu",
+        enable_mkldnn=False,
+    )
 
-    words = []
-    boxes = []
+    try:
+        result = ocr_engine.predict(image_path)
 
-    for res in result:
-        rec_texts = res.get("rec_texts", [])
-        rec_boxes = res.get("rec_boxes", [])
+        words = []
+        boxes = []
 
-        for text, box in zip(rec_texts, rec_boxes):
-            text = str(text).strip()
+        for res in result:
+            rec_texts = res.get("rec_texts", [])
+            rec_boxes = res.get("rec_boxes", [])
 
-            if not text:
-                continue
+            for text, box in zip(rec_texts, rec_boxes):
+                text = str(text).strip()
 
-            words.append(text)
-            boxes.append(box.tolist() if hasattr(box, "tolist") else box)
+                if not text:
+                    continue
 
-    return words, boxes
+                words.append(text)
+                boxes.append(box.tolist() if hasattr(box, "tolist") else box)
+
+        return words, boxes
+
+    finally:
+        del ocr_engine
+        gc.collect()
 
 
 def predict_words(image_path):
