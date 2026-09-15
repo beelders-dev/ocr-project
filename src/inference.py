@@ -3,6 +3,8 @@ import sys
 import time
 import ast
 import subprocess
+import time
+import psutil
 
 
 import torch
@@ -35,20 +37,32 @@ LABEL_LIST = [
 ]
 
 
+MODEL = None
+TOKENIZER = None
+IMAGE_PROCESSOR = None
+
+
 def load_model():
-    """Load the trained LayoutLMv3 model and its tokenizer."""
-    tokenizer = LayoutLMv3Tokenizer.from_pretrained(
-        MODEL_NAME,
-        add_prefix_space=True,
-    )
+    """Load LayoutLMv3 once and reuse it for subsequent receipt requests."""
+    global MODEL, TOKENIZER, IMAGE_PROCESSOR
 
-    image_processor = LayoutLMv3ImageProcessor.from_pretrained(MODEL_NAME)
-    image_processor.apply_ocr = False
+    if MODEL is None:
+        print("[BENCH] Loading LayoutLMv3 model...", flush=True)
 
-    model = LayoutLMv3ForTokenClassification.from_pretrained(MODEL_PATH)
-    model.eval()
+        TOKENIZER = LayoutLMv3Tokenizer.from_pretrained(
+            MODEL_NAME,
+            add_prefix_space=True,
+        )
 
-    return model, tokenizer, image_processor
+        IMAGE_PROCESSOR = LayoutLMv3ImageProcessor.from_pretrained(MODEL_NAME)
+        IMAGE_PROCESSOR.apply_ocr = False
+
+        MODEL = LayoutLMv3ForTokenClassification.from_pretrained(MODEL_PATH)
+        MODEL.eval()
+
+        print("[BENCH] LayoutLMv3 model loaded.", flush=True)
+
+    return MODEL, TOKENIZER, IMAGE_PROCESSOR
 
 
 def normalize_box(box, width, height):
@@ -65,6 +79,10 @@ def normalize_box(box, width, height):
 
 def run_ocr(image_path):
     """Run PaddleOCR in a separate process and return OCR words with boxes."""
+    start = time.perf_counter()
+
+    log_memory("before OCR")
+
     result = subprocess.run(
         [
             sys.executable,
@@ -77,6 +95,11 @@ def run_ocr(image_path):
         encoding="utf-8",
     )
 
+    elapsed = time.perf_counter() - start
+
+    log_memory("after OCR")
+    print(f"[BENCH] PaddleOCR: {elapsed:.2f}s", flush=True)
+
     if result.returncode != 0:
         print("OCR WORKER FAILED")
         print("RETURN CODE:", result.returncode)
@@ -84,7 +107,6 @@ def run_ocr(image_path):
         print(result.stdout)
         print("STDERR:")
         print(result.stderr)
-
         raise RuntimeError("OCR worker failed")
 
     words = []
@@ -95,9 +117,10 @@ def run_ocr(image_path):
             continue
 
         text, box_text = line.split("\t", 1)
-
         words.append(text)
         boxes.append(ast.literal_eval(box_text))
+
+    print(f"[BENCH] OCR words: {len(words)}", flush=True)
 
     return words, boxes
 
@@ -105,6 +128,7 @@ def run_ocr(image_path):
 def predict_words(image_path):
     """Predict one LayoutLMv3 label for each original OCR word."""
     total_start = time.perf_counter()
+    log_memory("start")
 
     resize_start = time.perf_counter()
 
@@ -120,8 +144,11 @@ def predict_words(image_path):
         ocr_start = time.perf_counter()
 
         words, pixel_boxes = run_ocr(processed_image_path)
+        log_memory("after OCR pipeline")
+
+        model_start = time.perf_counter()
         model, tokenizer, image_processor = load_model()
-        model_load_time = time.perf_counter() - total_start
+        model_load_time = time.perf_counter() - model_start
 
         ocr_time = time.perf_counter() - ocr_start
 
@@ -205,6 +232,8 @@ def predict_words(image_path):
 
         inference_time = time.perf_counter() - inference_start
 
+        print(f"[BENCH] LayoutLMv3: {inference_time:.2f}s", flush=True)
+        log_memory("after LayoutLMv3")
         predictions = outputs.logits.argmax(dim=-1)[0].tolist()
 
         # Ignore BOS because the first prediction belongs to the first token.
@@ -274,6 +303,19 @@ def predict_words(image_path):
                 os.remove(processed_image_path)
             except FileNotFoundError:
                 pass
+
+
+def log_memory(label):
+    process = psutil.Process(os.getpid())
+    memory = process.memory_info().rss
+
+    for child in process.children(recursive=True):
+        try:
+            memory += child.memory_info().rss
+        except psutil.NoSuchProcess:
+            pass
+
+    print(f"[BENCH] {label} memory: {memory / 1024**2:.0f} MB", flush=True)
 
 
 def main():
