@@ -37,9 +37,9 @@ button {
 .app {
   width: 100%;
   max-width: 760px;
-  min-height: 100vh;
+  min-height: 100dvh;
   margin: 0 auto;
-  padding: 20px 18px 40px;
+  padding: clamp(16px, 3vh, 30px) 18px max(24px, env(safe-area-inset-bottom));
 }
 
 /* -----------------------------
@@ -50,7 +50,7 @@ button {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 56px;
+  margin-bottom: clamp(28px, 7vh, 56px);
 }
 
 .brand {
@@ -96,7 +96,7 @@ button {
 ----------------------------- */
 
 .hero {
-  margin-bottom: 34px;
+  margin-bottom: clamp(24px, 5vh, 34px);
 }
 
 .hero-label,
@@ -140,7 +140,8 @@ button {
 .receipt-placeholder {
   position: relative;
   display: flex;
-  min-height: 350px;
+  min-height: clamp(260px, 42vh, 350px);
+  max-height: 52vh;
   align-items: center;
   justify-content: center;
   overflow: hidden;
@@ -151,8 +152,8 @@ button {
 
 .receipt-paper {
   position: relative;
-  width: 170px;
-  min-height: 250px;
+  width: min(170px, 42vw);
+  min-height: clamp(210px, 34vh, 250px);
   padding: 25px 20px;
   transform: rotate(-4deg);
   background: #ffffff;
@@ -211,8 +212,8 @@ button {
 
 .scan-corners {
   position: absolute;
-  width: 230px;
-  height: 300px;
+  width: min(230px, 68vw);
+  height: min(300px, 42vh);
 }
 
 .corner {
@@ -398,7 +399,7 @@ button {
 .receipt-preview img {
   display: block;
   width: 100%;
-  max-height: 560px;
+  max-height: min(560px, 65dvh);
   object-fit: contain;
 }
 
@@ -682,7 +683,7 @@ footer strong {
   }
 
   .topbar {
-    margin-bottom: 70px;
+    margin-bottom: clamp(36px, 8vh, 70px);
   }
 
   .scanner-area {
@@ -703,6 +704,8 @@ footer strong {
 .camera-overlay {
   position: fixed;
   inset: 0;
+  height: 100dvh;
+  min-height: 100dvh;
   z-index: 1000;
   display: flex;
   flex-direction: column;
@@ -715,7 +718,7 @@ footer strong {
   align-items: center;
   justify-content: space-between;
   min-height: 64px;
-  padding: 0 18px;
+  padding: max(0px, env(safe-area-inset-top)) 18px 0;
   font-size: 15px;
   font-weight: 700;
 }
@@ -802,9 +805,9 @@ footer strong {
 
 .capture-button {
   align-self: center;
-  width: 72px;
-  height: 72px;
-  margin: 20px 0 8px;
+  width: clamp(64px, 18vw, 72px);
+  height: clamp(64px, 18vw, 72px);
+  margin: clamp(12px, 3vh, 20px) 0 8px;
   padding: 5px;
   border: 4px solid white;
   border-radius: 50%;
@@ -826,7 +829,7 @@ footer strong {
 }
 
 .camera-action-label {
-  margin: 0 0 22px;
+  margin: 0 0 max(18px, env(safe-area-inset-bottom));
   color: #d8ded9;
   font-size: 12px;
   text-align: center;
@@ -879,4 +882,37 @@ footer strong {
   color: #7d877f;
   font-size: 11px;
   line-height: 1.5;
+}
+
+@media (max-height: 700px) {
+  .topbar {
+    margin-bottom: 28px;
+  }
+
+  .hero {
+    margin-bottom: 22px;
+  }
+
+  .hero-description {
+    margin-top: 12px;
+  }
+
+  .scanner-actions {
+    margin-top: 14px;
+  }
+
+  .receipt-placeholder {
+    min-height: 240px;
+    max-height: 38vh;
+  }
+
+  .receipt-paper {
+    min-height: 190px;
+    transform: rotate(-3deg) scale(0.85);
+  }
+
+  .scan-corners {
+    width: 190px;
+    height: 220px;
+  }
 }
