@@ -7,13 +7,10 @@ function App() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [previewError, setPreviewError] = useState(false);
-  const [cameraOpen, setCameraOpen] = useState(false);
-  const [cameraError, setCameraError] = useState(null);
+
   const [previewUrl, setPreviewUrl] = useState(null);
 
-  const videoRef = useRef(null);
-  const canvasRef = useRef(null);
-  const streamRef = useRef(null);
+  const nativeCameraInputRef = useRef(null);
 
   useEffect(() => {
     if (!image) {
@@ -28,127 +25,6 @@ function App() {
       URL.revokeObjectURL(url);
     };
   }, [image]);
-
-  async function openCamera() {
-    setCameraError(null);
-    setCameraOpen(true);
-
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: {
-          facingMode: {
-            ideal: "environment",
-          },
-          width: {
-            ideal: 1920,
-          },
-          height: {
-            ideal: 1080,
-          },
-        },
-        audio: false,
-      });
-
-      const track = stream.getVideoTracks()[0];
-      const capabilities = track.getCapabilities();
-
-      // Enable continuous autofocus when the camera exposes it.
-      if (capabilities.focusMode?.includes("continuous")) {
-        await track.applyConstraints({
-          advanced: [
-            {
-              focusMode: "continuous",
-            },
-          ],
-        });
-      }
-
-      streamRef.current = stream;
-
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-      }
-    } catch (error) {
-      console.error("Camera error:", error);
-      setCameraError(
-        "Unable to access the camera. Please check your browser permission.",
-      );
-    }
-  }
-
-  async function handleCameraTap(event) {
-    const video = videoRef.current;
-    const stream = streamRef.current;
-
-    if (!video || !stream) return;
-
-    const track = stream.getVideoTracks()[0];
-    const capabilities = track.getCapabilities();
-
-    console.log("Camera capabilities:", capabilities);
-
-    if (!capabilities.focusMode) {
-      console.log("Manual focus is not supported.");
-      return;
-    }
-
-    try {
-      await track.applyConstraints({
-        advanced: [
-          {
-            focusMode: "manual",
-          },
-        ],
-      });
-
-      console.log("Manual focus mode enabled.");
-    } catch (error) {
-      console.error("Focus control failed:", error);
-    }
-  }
-
-  function closeCamera() {
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach((track) => track.stop());
-      streamRef.current = null;
-    }
-
-    setCameraOpen(false);
-    setCameraError(null);
-  }
-
-  function capturePhoto() {
-    const video = videoRef.current;
-    const canvas = canvasRef.current;
-
-    if (!video || !canvas) return;
-
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
-
-    const context = canvas.getContext("2d");
-
-    context.drawImage(video, 0, 0, canvas.width, canvas.height);
-
-    canvas.toBlob(
-      (blob) => {
-        if (!blob) return;
-
-        const file = new File([blob], `receipt-${Date.now()}.jpg`, {
-          type: "image/jpeg",
-        });
-
-        setImage(file);
-        setResult(null);
-        setError(null);
-        setPreviewError(false);
-
-        closeCamera();
-      },
-      "image/jpeg",
-      0.92,
-    );
-  }
 
   function handleImageChange(event) {
     const selectedFile = event.target.files?.[0];
@@ -167,6 +43,29 @@ function App() {
     setResult(null);
     setPreviewError(false);
     setImage(selectedFile);
+  }
+
+  function handleNativeCameraChange(event) {
+    const file = event.target.files?.[0];
+
+    if (!file) return;
+
+    if (!file.type.startsWith("image/")) {
+      setImage(null);
+      setResult(null);
+      setError("Please capture a valid receipt image.");
+      setPreviewError(false);
+      event.target.value = "";
+      return;
+    }
+
+    setImage(file);
+    setResult(null);
+    setError(null);
+    setPreviewError(false);
+
+    // Allow capturing the same image again later.
+    event.target.value = "";
   }
 
   async function processReceipt() {
@@ -217,48 +116,15 @@ function App() {
 
   return (
     <main className="app">
-      {cameraOpen && (
-        <div className="camera-overlay">
-          <div className="camera-header">
-            <button className="camera-close" onClick={closeCamera}>
-              ×
-            </button>
+      <input
+        ref={nativeCameraInputRef}
+        type="file"
+        accept="image/*"
+        capture="environment"
+        onChange={handleNativeCameraChange}
+        hidden
+      />
 
-            <span>Scan Receipt</span>
-
-            <div className="camera-spacer"></div>
-          </div>
-
-          <div className="camera-view" onClick={handleCameraTap}>
-            <video ref={videoRef} autoPlay playsInline muted />
-
-            <div className="camera-frame">
-              <div className="camera-frame-label">FIT RECEIPT HERE</div>
-
-              <span className="camera-corner top-left"></span>
-              <span className="camera-corner top-right"></span>
-              <span className="camera-corner bottom-left"></span>
-              <span className="camera-corner bottom-right"></span>
-            </div>
-
-            <p className="camera-hint">Position the receipt inside the frame</p>
-          </div>
-
-          {cameraError ? (
-            <div className="camera-error">{cameraError}</div>
-          ) : (
-            <button className="capture-button" onClick={capturePhoto}>
-              <span></span>
-            </button>
-          )}
-
-          <p className="camera-action-label">
-            {cameraError ? "Camera unavailable" : "Capture"}
-          </p>
-
-          <canvas ref={canvasRef} className="camera-canvas" />
-        </div>
-      )}
       <header className="topbar">
         <div className="brand">
           <div className="brand-mark">R</div>
@@ -316,7 +182,10 @@ function App() {
           </div>
 
           <div className="scanner-actions">
-            <button className="primary-button" onClick={openCamera}>
+            <button
+              className="primary-button"
+              onClick={() => nativeCameraInputRef.current?.click()}
+            >
               <span className="button-icon">⌾</span>
               <span>Scan Receipt</span>
             </button>
