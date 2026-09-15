@@ -129,23 +129,83 @@ function App() {
   function downloadExcel() {
     if (!result) return;
 
-    const row = {
-      Company: result.company || "",
-      Date: result.date || "",
-      TIN: result.tin || "",
-      "Invoice Number": result.invoice_number || "",
-      "VATable Sales": result.vatable_sales ?? "",
-      "VAT Amount": result.vat_amount ?? "",
-      Total: result.total ?? "",
-      "VAT Valid": result.vat_valid ? "Yes" : "No",
+    const exportedAt = new Date();
+
+    const data = [
+      ["Receiptly — Receipt Data"],
+      [
+        `Exported: ${exportedAt.toLocaleDateString()} ${exportedAt.toLocaleTimeString()}`,
+      ],
+      [],
+      [
+        "Company",
+        "Date",
+        "TIN",
+        "Invoice Number",
+        "VATable Sales",
+        "VAT Amount",
+        "Total",
+        "VAT Valid",
+      ],
+      [
+        result.company || "Not detected",
+        result.date || "Not detected",
+        result.tin || "Not detected",
+        result.invoice_number || "Not detected",
+        result.vatable_sales ?? "",
+        result.vat_amount ?? "",
+        result.total ?? "",
+        result.vat_valid ? "Yes" : "Needs review",
+      ],
+    ];
+
+    const worksheet = XLSX.utils.aoa_to_sheet(data);
+
+    worksheet["!cols"] = [
+      { wch: 28 },
+      { wch: 18 },
+      { wch: 18 },
+      { wch: 20 },
+      { wch: 18 },
+      { wch: 16 },
+      { wch: 16 },
+      { wch: 16 },
+    ];
+
+    worksheet["!freeze"] = { xSplit: 0, ySplit: 4 };
+
+    ["E5", "F5", "G5"].forEach((cell) => {
+      if (worksheet[cell]) {
+        worksheet[cell].z = "₱#,##0.00";
+      }
+    });
+
+    worksheet["A1"].s = {
+      font: {
+        bold: true,
+        sz: 16,
+      },
     };
 
-    const worksheet = XLSX.utils.json_to_sheet([row]);
+    const headerCells = ["A4", "B4", "C4", "D4", "E4", "F4", "G4", "H4"];
+
+    headerCells.forEach((cell) => {
+      worksheet[cell].s = {
+        font: {
+          bold: true,
+        },
+      };
+    });
+
     const workbook = XLSX.utils.book_new();
 
     XLSX.utils.book_append_sheet(workbook, worksheet, "Receipt");
 
-    XLSX.writeFile(workbook, `receipt-${Date.now()}.xlsx`);
+    const datePart = result.date
+      ? String(result.date).replace(/[^\d-]/g, "-")
+      : exportedAt.toISOString().slice(0, 10);
+
+    XLSX.writeFile(workbook, `receiptly-${datePart}.xlsx`);
   }
 
   function resetReceipt() {
@@ -368,7 +428,7 @@ function App() {
             </div>
           </div>
           <button className="download-excel-button" onClick={downloadExcel}>
-            <span>↓</span>
+            <span className="download-icon">↓</span>
             <span>Download Excel</span>
           </button>
 

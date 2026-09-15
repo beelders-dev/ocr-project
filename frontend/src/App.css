@@ -1025,3 +1025,51 @@ footer strong {
     height: 220px;
   }
 }
+/* -----------------------------
+   Excel download
+----------------------------- */
+
+.download-excel-button {
+  display: flex;
+  width: 100%;
+  min-height: 54px;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  margin-top: 12px;
+  padding: 0 18px;
+  border: 1px solid #cfd8d1;
+  border-radius: 14px;
+  background: #ffffff;
+  color: #31533d;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 750;
+  transition:
+    background 0.2s ease,
+    border-color 0.2s ease,
+    transform 0.2s ease;
+}
+
+.download-excel-button:hover {
+  background: #f4f8f5;
+  border-color: #b9c8bc;
+  transform: translateY(-1px);
+}
+
+.download-excel-button:active {
+  transform: translateY(0);
+}
+
+.download-icon {
+  display: grid;
+  width: 25px;
+  height: 25px;
+  place-items: center;
+  border-radius: 7px;
+  background: #e5eee7;
+  color: #287044;
+  font-size: 16px;
+  font-weight: 800;
+  line-height: 1;
+}
