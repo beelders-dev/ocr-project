@@ -1,4 +1,6 @@
 import { useEffect, useRef, useState } from "react";
+import { useReceiptScanner } from "./useReceiptScanner";
+
 import "./App.css";
 
 function App() {
@@ -7,6 +9,7 @@ function App() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [previewError, setPreviewError] = useState(false);
+  const { scanImage, isProcessing } = useReceiptScanner();
 
   const [previewUrl, setPreviewUrl] = useState(null);
 
@@ -45,27 +48,42 @@ function App() {
     setImage(selectedFile);
   }
 
-  function handleNativeCameraChange(event) {
+  async function handleNativeCameraChange(event) {
     const file = event.target.files?.[0];
 
     if (!file) return;
 
+    event.target.value = "";
+
     if (!file.type.startsWith("image/")) {
-      setImage(null);
-      setResult(null);
       setError("Please capture a valid receipt image.");
-      setPreviewError(false);
-      event.target.value = "";
       return;
     }
 
-    setImage(file);
-    setResult(null);
-    setError(null);
-    setPreviewError(false);
+    try {
+      const dataUrl = await scanImage(file);
 
-    // Allow capturing the same image again later.
-    event.target.value = "";
+      const response = await fetch(dataUrl);
+      const blob = await response.blob();
+
+      const scannedFile = new File(
+        [blob],
+        `receipt-scanned-${Date.now()}.jpg`,
+        {
+          type: "image/jpeg",
+        },
+      );
+
+      setImage(scannedFile);
+      setResult(null);
+      setError(null);
+      setPreviewError(false);
+    } catch (error) {
+      setImage(null);
+      setResult(null);
+      setError(`Scanner error: ${error.message}`);
+      setPreviewError(false);
+    }
   }
 
   async function processReceipt() {
