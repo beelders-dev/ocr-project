@@ -98,8 +98,6 @@ def run_ocr(image_path):
 def predict_words(image_path):
     """Predict one LayoutLMv3 label for each original OCR word."""
     total_start = time.perf_counter()
-    model, tokenizer, image_processor = load_model()
-    model_load_time = time.perf_counter() - total_start
 
     resize_start = time.perf_counter()
 
@@ -115,6 +113,8 @@ def predict_words(image_path):
         ocr_start = time.perf_counter()
 
         words, pixel_boxes = run_ocr(processed_image_path)
+        model, tokenizer, image_processor = load_model()
+        model_load_time = time.perf_counter() - total_start
 
         ocr_time = time.perf_counter() - ocr_start
 
