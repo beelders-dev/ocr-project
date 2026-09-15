@@ -10,27 +10,10 @@ function App() {
   const [error, setError] = useState(null);
   const [previewError, setPreviewError] = useState(false);
   const { scanImage, isProcessing } = useReceiptScanner();
-  const [opencvReady, setOpencvReady] = useState(false);
 
   const [previewUrl, setPreviewUrl] = useState(null);
 
   const nativeCameraInputRef = useRef(null);
-
-  useEffect(() => {
-    if (window.cv) {
-      setOpencvReady(true);
-      return;
-    }
-
-    const checkOpenCV = setInterval(() => {
-      if (window.cv) {
-        setOpencvReady(true);
-        clearInterval(checkOpenCV);
-      }
-    }, 100);
-
-    return () => clearInterval(checkOpenCV);
-  }, []);
 
   useEffect(() => {
     if (!image) {
@@ -219,11 +202,10 @@ function App() {
           <div className="scanner-actions">
             <button
               className="primary-button"
-              disabled={!opencvReady}
               onClick={() => nativeCameraInputRef.current?.click()}
             >
               <span className="button-icon">⌾</span>
-              <span>{opencvReady ? "Scan Receipt" : "Loading scanner..."}</span>
+              <span>Scan Receipt</span>
             </button>
 
             <label className="gallery-button">
