@@ -1,37 +1,61 @@
 import re
 
-AMOUNT_PATTERN = r"\b\d+(?:,\d{3})*(?:\.\d{2})\b"
+AMOUNT_PATTERN = r"(?<!\d)\d{1,3}(?:,\d{3})*\.\d{2}(?!\d)"
 TIN_PATTERN = r"\b\d{3}[-\s]\d{3}[-\s]\d{3}[-\s]\d{3,5}\b"
 
 
 def extract_company(predictions):
-    """Extract the company name from LayoutLM word predictions."""
-    company_words = []
+    """Extract the company name while removing overlapping predictions."""
+    company_items = [
+        item["text"].strip()
+        for item in predictions
+        if item["label"] in {"B-COMPANY", "I-COMPANY"} and item["text"].strip()
+    ]
 
-    for item in predictions:
-        if item["label"] in {"B-COMPANY", "I-COMPANY"}:
-            company_words.append(item["text"])
+    if not company_items:
+        return ""
 
-    return " ".join(company_words).strip()
+    # Prefer a complete prediction when one contains the other
+    # company predictions.
+    for candidate in sorted(company_items, key=len, reverse=True):
+        normalized_candidate = " ".join(candidate.upper().split())
+
+        contained = True
+
+        for other in company_items:
+            normalized_other = " ".join(other.upper().split())
+
+            if normalized_other == normalized_candidate:
+                continue
+
+            if normalized_other not in normalized_candidate:
+                contained = False
+                break
+
+        if contained:
+            return candidate
+
+    return " ".join(company_items)
 
 
 def extract_date(predictions):
     """Extract the most likely transaction date from receipt text."""
     date_patterns = [
-        # 09/12/2026, 09-12-2026, optionally with time
-        r"\b\d{2}[-/]\d{2}[-/]\d{4}" r"(?:\s+\d{2}:\d{2}(?::\d{2})?)?\b",
-        # 09-03-26, optionally with time and AM/PM
-        r"\b\d{2}[-/]\d{2}[-/]\d{2}" r"(?:\s+\d{2}:\d{2}(?::\d{2})?(?:\s*[AP]M)?)?\b",
-        # 30 Aug 26 18:01:52
-        r"\b\d{1,2}\s+[A-Za-z]{3}\s+\d{2,4}" r"(?:\s+\d{2}:\d{2}(?::\d{2})?)?\b",
+        r"\b\d{2}[-/]\d{2}[-/]\d{4}\b",
+        r"\b\d{2}[-/]\d{2}[-/]\d{2}\b",
+        r"\b\d{1,2}\s+[A-Za-z]{3}\s+\d{2,4}\b",
     ]
 
     candidates = []
 
     for index, item in enumerate(predictions):
-        text = item["text"]
+        text = item["text"].strip()
+        upper = text.upper()
 
-        if "DATE ISSUED" in text.upper():
+        if not text:
+            continue
+
+        if "DATE OF ISSUANCE" in upper:
             continue
 
         for pattern in date_patterns:
@@ -40,114 +64,160 @@ def extract_date(predictions):
             if not match:
                 continue
 
-            candidate = match.group()
+            value = match.group()
 
-            has_time = bool(re.search(r"\d{1,2}:\d{2}", candidate))
+            score = 0
+
+            if re.search(r"\bDATE\s*:", upper):
+                score += 10
+
+            if "TXN" in upper or "TRANSACTION" in upper:
+                score += 5
+
+            if "DATE" in upper:
+                score += 2
 
             candidates.append(
                 {
-                    "value": candidate,
-                    "has_time": has_time,
+                    "value": value,
+                    "score": score,
                     "index": index,
                 }
             )
 
             break
 
-    # A transaction timestamp is usually the strongest candidate.
-    for candidate in candidates:
-        if candidate["has_time"]:
-            return candidate["value"]
+    if not candidates:
+        return ""
 
-    return candidates[0]["value"] if candidates else ""
+    candidates.sort(
+        key=lambda candidate: (
+            candidate["score"],
+            -candidate["index"],
+        ),
+        reverse=True,
+    )
+
+    return candidates[0]["value"]
 
 
 def extract_tin(predictions):
-    """Extract the most likely Philippine TIN from receipt text."""
-    for item in predictions:
-        text = item["text"]
+    """Extract the merchant TIN using receipt position and nearby context."""
+    tin_candidates = []
 
-        if "TIN" not in text.upper():
+    for index, item in enumerate(predictions):
+        text = item["text"].strip()
+        upper = text.upper()
+
+        # OCR may read TIN as T1N, T!N, etc.
+        if not re.search(r"T[1I!]N", upper):
             continue
 
         match = re.search(TIN_PATTERN, text)
 
-        if match:
-            return match.group()
+        if not match:
+            nearby_text = " ".join(
+                next_item["text"]
+                for next_item in predictions[max(0, index - 2) : index + 3]
+            )
 
-    # Also check nearby OCR words.
-    for index, item in enumerate(predictions):
-        if "TIN" not in item["text"].upper():
+            match = re.search(TIN_PATTERN, nearby_text)
+
+        if not match:
             continue
 
-        nearby_text = " ".join(
-            next_item["text"]
-            for next_item in predictions[max(0, index - 1) : index + 3]
+        value = match.group()
+
+        score = 0
+
+        # Merchant TINs are usually near the top/header.
+        if index < 20:
+            score += 10
+
+        # "VAT Reg." near the TIN is a strong merchant indicator.
+        nearby = " ".join(
+            item["text"].upper() for item in predictions[max(0, index - 2) : index + 2]
         )
 
-        match = re.search(TIN_PATTERN, nearby_text)
+        if "VAT REG" in nearby:
+            score += 10
 
-        if match:
-            return match.group()
+        # Footer/vendor information should be strongly penalized.
+        if index > len(predictions) * 0.7:
+            score -= 15
 
-    return ""
+        if any(
+            keyword in nearby
+            for keyword in [
+                "SOFTWARE",
+                "FCCDTN",
+                "DATE OF ISSUANCE",
+                "ACCREDIT",
+            ]
+        ):
+            score -= 15
+
+        tin_candidates.append(
+            {
+                "value": value,
+                "score": score,
+                "index": index,
+            }
+        )
+
+    if not tin_candidates:
+        return ""
+
+    tin_candidates.sort(
+        key=lambda candidate: (
+            candidate["score"],
+            -candidate["index"],
+        ),
+        reverse=True,
+    )
+
+    return tin_candidates[0]["value"]
 
 
 def extract_invoice_number(predictions):
-    """Extract an invoice or sales invoice number using nearby labels."""
-    invoice_patterns = [
-        r"SALES\s+INVOICE(?:\s+(?:NO|NUMBER))?",
-        r"INVOICE\s*[#№]?\s*(?:NO\.?|NUMBER)?",
-        r"INV(?:OICE)?\s*[#№]?\s*(?:NO\.?|NUMBER)?",
-        r"SI\s*[#№]?\s*(?:NO\.?|NUMBER)?",
-    ]
+    """Extract an invoice number from an invoice label and nearby OCR text."""
+    invoice_label_pattern = re.compile(
+        r"(?:SALES\s+INVOICE|INVOICE|INV0ICE|INVO1CE|INV|SI)"
+        r"(?:\s*(?:#|№|NO\.?|NUMBER))?",
+        re.IGNORECASE,
+    )
 
-    number_pattern = r"\b\d{4,}\b"
+    number_pattern = re.compile(r"(?<!\d)\d{6,}(?:-\d+)?(?!\d)")
 
-    # First look for a label and number in the same OCR item.
     for index, item in enumerate(predictions):
-        text = item["text"]
+        text = item["text"].strip()
 
-        if not any(
-            re.search(pattern, text, re.IGNORECASE) for pattern in invoice_patterns
-        ):
+        if not invoice_label_pattern.search(text):
             continue
 
-        # Remove obvious non-invoice numbers such as dates.
-        candidates = re.findall(number_pattern, text)
+        # First check the label itself.
+        match = number_pattern.search(text)
 
-        for candidate in candidates:
-            if len(candidate) >= 4:
-                return candidate
+        if match:
+            return match.group()
 
-    # Then check nearby OCR words.
-    for index, item in enumerate(predictions):
-        text = item["text"]
-
-        if not any(
-            re.search(pattern, text, re.IGNORECASE) for pattern in invoice_patterns
-        ):
-            continue
-
-        nearby_items = predictions[max(0, index - 2) : index + 4]
+        # Then inspect nearby OCR words.
+        nearby_items = predictions[max(0, index - 1) : index + 5]
 
         for nearby_item in nearby_items:
-            candidate = re.search(
-                number_pattern,
-                nearby_item["text"],
-            )
+            candidate_text = nearby_item["text"]
 
-            if candidate:
-                return candidate.group()
+            match = number_pattern.search(candidate_text)
+
+            if match:
+                return match.group()
 
     return ""
 
 
 def extract_amount(text):
-    """Extract a receipt amount from text, including common currency prefixes."""
-    amount_pattern = r"(?<!\d)\d+(?:,\d{3})*(?:\.\d{2})(?!\d)"
-
-    match = re.search(amount_pattern, text)
+    """Extract a two-decimal receipt amount from OCR text."""
+    match = re.search(AMOUNT_PATTERN, text)
 
     if not match:
         return None
@@ -156,7 +226,7 @@ def extract_amount(text):
 
 
 def extract_labeled_amount(predictions, label_pattern):
-    """Find a numeric value associated with a nearby receipt label."""
+    """Find an amount associated with a nearby receipt label."""
     for index, item in enumerate(predictions):
         if not re.search(
             label_pattern,
@@ -165,28 +235,29 @@ def extract_labeled_amount(predictions, label_pattern):
         ):
             continue
 
-        for next_item in predictions[index + 1 : index + 3]:
-            match = re.search(
-                AMOUNT_PATTERN,
-                next_item["text"],
-            )
+        nearby_items = predictions[index + 1 : index + 4]
 
-            if match:
-                return float(match.group().replace(",", ""))
+        for nearby_item in nearby_items:
+            amount = extract_amount(nearby_item["text"])
+
+            if amount is not None:
+                return amount
 
     return None
 
 
 def extract_vatable_sales(predictions):
-    """Extract Vatable Sales from an amount associated with its label."""
-
-    # Some receipts use (T) to identify Vatable Sales.
+    """Extract Vatable Sales using receipt labels and the (T) marker."""
+    # Some Philippine receipts use (T) to identify Vatable Sales.
     for index, item in enumerate(predictions):
-        if item["text"].strip() == "(T)":
-            for nearby_item in predictions[index + 1 : index + 3]:
-                amount = extract_amount(nearby_item["text"])
-                if amount is not None:
-                    return amount
+        if item["text"].strip().upper() != "(T)":
+            continue
+
+        for nearby_item in predictions[index + 1 : index + 4]:
+            amount = extract_amount(nearby_item["text"])
+
+            if amount is not None:
+                return amount
 
     vatable_patterns = [
         r"^/?v?atable(?:\s+sales?)?$",
@@ -199,17 +270,26 @@ def extract_vatable_sales(predictions):
         text = item["text"].strip()
 
         if not any(
-            re.fullmatch(pattern, text, re.IGNORECASE) for pattern in vatable_patterns
+            re.fullmatch(
+                pattern,
+                text,
+                re.IGNORECASE,
+            )
+            for pattern in vatable_patterns
         ):
             continue
 
+        # Most receipts put the value immediately after the label.
         for nearby_item in predictions[index + 1 : index + 4]:
             amount = extract_amount(nearby_item["text"])
+
             if amount is not None:
                 return amount
 
-        for nearby_item in predictions[max(0, index - 2) : index]:
+        # Also support layouts where the value appears before the label.
+        for nearby_item in predictions[max(0, index - 3) : index]:
             amount = extract_amount(nearby_item["text"])
+
             if amount is not None:
                 return amount
 
@@ -217,42 +297,41 @@ def extract_vatable_sales(predictions):
 
 
 def extract_vat_amount(predictions):
-    """Extract VAT Amount from an amount associated with its label."""
+    """Extract VAT Amount using labels and the expected 12% relationship."""
     vat_patterns = [
         r"^/?vat$",
         r"^/?vat\s+amount$",
-        r"^/?vat\s*(?:[-:]?\s*(?:\(12%\)|12%))?$",
+        r"^/?vat\s*[-:]?\s*(?:\(12%\)|12%)?$",
         r"^12%\s+vat$",
         r"^plus\s+vat\s+amount$",
+        r"^vat\s*[-:]?\s*12%$",
     ]
+
+    vatable_sales = extract_vatable_sales(predictions)
 
     for index, item in enumerate(predictions):
         text = item["text"].strip()
 
         if not any(
-            re.fullmatch(pattern, text, re.IGNORECASE) for pattern in vat_patterns
+            re.fullmatch(
+                pattern,
+                text,
+                re.IGNORECASE,
+            )
+            for pattern in vat_patterns
         ):
             continue
 
         candidates = []
 
-        # Check amounts before the VAT label.
-        for nearby_item in predictions[max(0, index - 2) : index]:
+        for nearby_item in predictions[max(0, index - 3) : index + 4]:
             amount = extract_amount(nearby_item["text"])
-            if amount is not None:
-                candidates.append(amount)
 
-        # Check amounts after the VAT label.
-        for nearby_item in predictions[index + 1 : index + 4]:
-            amount = extract_amount(nearby_item["text"])
             if amount is not None:
                 candidates.append(amount)
 
         if not candidates:
             continue
-
-        # Prefer the amount closest to 12% of Vatable Sales.
-        vatable_sales = extract_vatable_sales(predictions)
 
         if vatable_sales is not None:
             expected_vat = vatable_sales * 0.12
@@ -269,32 +348,36 @@ def extract_vat_amount(predictions):
 
 def extract_total(predictions):
     """Extract the receipt total using explicit labels and nearby amounts."""
-
     total_labels = [
         r"^total$",
         r"^total\s+sales$",
+        r"^total\s+salas$",
+        r"^total\s+sale?s$",
         r"^amount\s+due:?$",
         r"^total\s+payment$",
         r"^grand\s+total$",
     ]
 
-    # Prefer amounts associated with explicit total labels.
     for index, item in enumerate(predictions):
         text = item["text"].strip()
 
         if not any(
-            re.fullmatch(pattern, text, re.IGNORECASE) for pattern in total_labels
+            re.fullmatch(
+                pattern,
+                text,
+                re.IGNORECASE,
+            )
+            for pattern in total_labels
         ):
             continue
 
-        # Prefer amounts appearing after the total label.
         for nearby_item in predictions[index + 1 : index + 4]:
             amount = extract_amount(nearby_item["text"])
 
             if amount is not None:
                 return amount
 
-    # Use LayoutLM B-TOTAL only as a fallback.
+    # LayoutLM total prediction remains a fallback.
     for item in predictions:
         if item["label"] != "B-TOTAL":
             continue
@@ -304,7 +387,7 @@ def extract_total(predictions):
         if amount is not None:
             return amount
 
-    # Fall back to Vatable Sales + VAT when no explicit total is found.
+    # Mathematical fallback.
     vatable_sales = extract_vatable_sales(predictions)
     vat_amount = extract_vat_amount(predictions)
 
@@ -348,6 +431,13 @@ def extract_receipt_fields(predictions):
         "vatable_sales": vatable_sales,
         "vat_amount": vat_amount,
         "total": total,
-        "vat_valid": validate_vat(vatable_sales, vat_amount),
-        "total_valid": validate_total(vatable_sales, vat_amount, total),
+        "vat_valid": validate_vat(
+            vatable_sales,
+            vat_amount,
+        ),
+        "total_valid": validate_total(
+            vatable_sales,
+            vat_amount,
+            total,
+        ),
     }
