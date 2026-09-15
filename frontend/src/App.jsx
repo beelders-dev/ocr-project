@@ -39,9 +39,29 @@ function App() {
           facingMode: {
             ideal: "environment",
           },
+          width: {
+            ideal: 1920,
+          },
+          height: {
+            ideal: 1080,
+          },
         },
         audio: false,
       });
+
+      const track = stream.getVideoTracks()[0];
+      const capabilities = track.getCapabilities();
+
+      // Enable continuous autofocus when the camera exposes it.
+      if (capabilities.focusMode?.includes("continuous")) {
+        await track.applyConstraints({
+          advanced: [
+            {
+              focusMode: "continuous",
+            },
+          ],
+        });
+      }
 
       streamRef.current = stream;
 
@@ -53,6 +73,37 @@ function App() {
       setCameraError(
         "Unable to access the camera. Please check your browser permission.",
       );
+    }
+  }
+
+  async function handleCameraTap(event) {
+    const video = videoRef.current;
+    const stream = streamRef.current;
+
+    if (!video || !stream) return;
+
+    const track = stream.getVideoTracks()[0];
+    const capabilities = track.getCapabilities();
+
+    console.log("Camera capabilities:", capabilities);
+
+    if (!capabilities.focusMode) {
+      console.log("Manual focus is not supported.");
+      return;
+    }
+
+    try {
+      await track.applyConstraints({
+        advanced: [
+          {
+            focusMode: "manual",
+          },
+        ],
+      });
+
+      console.log("Manual focus mode enabled.");
+    } catch (error) {
+      console.error("Focus control failed:", error);
     }
   }
 
@@ -178,10 +229,12 @@ function App() {
             <div className="camera-spacer"></div>
           </div>
 
-          <div className="camera-view">
+          <div className="camera-view" onClick={handleCameraTap}>
             <video ref={videoRef} autoPlay playsInline muted />
 
             <div className="camera-frame">
+              <div className="camera-frame-label">FIT RECEIPT HERE</div>
+
               <span className="camera-corner top-left"></span>
               <span className="camera-corner top-right"></span>
               <span className="camera-corner bottom-left"></span>
