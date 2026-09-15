@@ -41,21 +41,26 @@ def extract_company(predictions):
 def extract_date(predictions):
     """Extract the most likely transaction date from receipt text."""
     date_patterns = [
-        r"\b\d{2}[-/]\d{2}[-/]\d{4}\b",
+        r"\b\d{2}[-/]\d{2}[-/]\d{4}",
         r"\b\d{2}[-/]\d{2}[-/]\d{2}\b",
         r"\b\d{1,2}\s+[A-Za-z]{3}\s+\d{2,4}\b",
+    ]
+
+    excluded_context = [
+        "DATEISSUED",
+        "DATEI88UED",
+        "DATEOFISSUANCE",
+        "EXPIR",
+        "VALIDUNTIL",
+        "DUEDATE",
     ]
 
     candidates = []
 
     for index, item in enumerate(predictions):
         text = item["text"].strip()
-        upper = text.upper()
 
         if not text:
-            continue
-
-        if "DATE OF ISSUANCE" in upper:
             continue
 
         for pattern in date_patterns:
@@ -64,23 +69,24 @@ def extract_date(predictions):
             if not match:
                 continue
 
-            value = match.group()
+            nearby_text = " ".join(
+                predictions[i]["text"].upper()
+                for i in range(
+                    max(0, index - 1),
+                    min(len(predictions), index + 2),
+                )
+            )
 
-            score = 0
+            # Normalize spacing so variants like
+            # "DateIssued" and "Date Issued" match the same rule.
+            normalized_context = "".join(nearby_text.split())
 
-            if re.search(r"\bDATE\s*:", upper):
-                score += 10
-
-            if "TXN" in upper or "TRANSACTION" in upper:
-                score += 5
-
-            if "DATE" in upper:
-                score += 2
+            if any(context in normalized_context for context in excluded_context):
+                continue
 
             candidates.append(
                 {
-                    "value": value,
-                    "score": score,
+                    "value": match.group(),
                     "index": index,
                 }
             )
@@ -90,15 +96,8 @@ def extract_date(predictions):
     if not candidates:
         return ""
 
-    candidates.sort(
-        key=lambda candidate: (
-            candidate["score"],
-            -candidate["index"],
-        ),
-        reverse=True,
-    )
-
-    return candidates[0]["value"]
+    # Prefer the latest remaining date in the receipt.
+    return candidates[-1]["value"]
 
 
 def extract_tin(predictions):
@@ -181,6 +180,7 @@ def extract_tin(predictions):
 
 def extract_invoice_number(predictions):
     """Extract an invoice number from an invoice label and nearby OCR text."""
+
     invoice_label_pattern = re.compile(
         r"(?:SALES\s+INVOICE|INVOICE|INV0ICE|INVO1CE|INV|SI)"
         r"(?:\s*(?:#|№|NO\.?|NUMBER))?",
@@ -201,11 +201,19 @@ def extract_invoice_number(predictions):
         if match:
             return match.group()
 
-        # Then inspect nearby OCR words.
-        nearby_items = predictions[max(0, index - 1) : index + 5]
+        # Only inspect the next two OCR items.
+        nearby_items = predictions[index + 1 : index + 3]
 
         for nearby_item in nearby_items:
             candidate_text = nearby_item["text"]
+
+            # Stop if we have already moved into unrelated receipt sections.
+            if re.search(
+                r"ACCREDIT|DATE\s*ISSUED|DATE\s+OF\s+ISSUANCE|VALID\s+UNTIL",
+                candidate_text,
+                re.IGNORECASE,
+            ):
+                break
 
             match = number_pattern.search(candidate_text)
 
@@ -247,46 +255,47 @@ def extract_labeled_amount(predictions, label_pattern):
 
 
 def extract_vatable_sales(predictions):
-    """Extract Vatable Sales using receipt labels and the (T) marker."""
-    # Some Philippine receipts use (T) to identify Vatable Sales.
-    for index, item in enumerate(predictions):
-        if item["text"].strip().upper() != "(T)":
-            continue
-
-        for nearby_item in predictions[index + 1 : index + 4]:
-            amount = extract_amount(nearby_item["text"])
-
-            if amount is not None:
-                return amount
+    """Extract Vatable Sales using receipt labels and nearby VAT amounts."""
 
     vatable_patterns = [
-        r"^/?v?atable(?:\s+sales?)?$",
-        r"^vat\s+sales$",
-        r"^sales\s+excl\.?\s*(?:of\s+)?vat$",
-        r"^net\s+sales$",
+        r"^/?[vu]?atable(?:\s+sales?)?:?$",
+        r"^vat\s+sales:?$",
+        r"^sales\s+excl\.?\s*(?:of\s+)?vat:?$",
+        r"^net\s+sales:?$",
     ]
 
     for index, item in enumerate(predictions):
         text = item["text"].strip()
 
         if not any(
-            re.fullmatch(
-                pattern,
-                text,
-                re.IGNORECASE,
-            )
-            for pattern in vatable_patterns
+            re.fullmatch(pattern, text, re.IGNORECASE) for pattern in vatable_patterns
         ):
             continue
 
-        # Most receipts put the value immediately after the label.
+        # Collect nearby numeric values on both sides of the label.
+        nearby_items = predictions[max(0, index - 3) : index + 4]
+
+        amounts = []
+
+        for nearby_item in nearby_items:
+            amount = extract_amount(nearby_item["text"])
+
+            if amount is not None:
+                amounts.append(amount)
+
+        # Prefer a pair that follows the expected 12% VAT relationship.
+        vatable_sales, vat_amount = find_vat_pair(amounts)
+
+        if vatable_sales is not None:
+            return vatable_sales
+
+        # Preserve the previous behavior as a fallback.
         for nearby_item in predictions[index + 1 : index + 4]:
             amount = extract_amount(nearby_item["text"])
 
             if amount is not None:
                 return amount
 
-        # Also support layouts where the value appears before the label.
         for nearby_item in predictions[max(0, index - 3) : index]:
             amount = extract_amount(nearby_item["text"])
 
@@ -299,12 +308,13 @@ def extract_vatable_sales(predictions):
 def extract_vat_amount(predictions):
     """Extract VAT Amount using labels and the expected 12% relationship."""
     vat_patterns = [
-        r"^/?vat$",
-        r"^/?vat\s+amount$",
-        r"^/?vat\s*[-:]?\s*(?:\(12%\)|12%)?$",
-        r"^12%\s+vat$",
-        r"^plus\s+vat\s+amount$",
-        r"^vat\s*[-:]?\s*12%$",
+        r"^/?vat:?$",
+        r"^/?vat\s+amount:?$",
+        r"^/?uat\s+amount:?$",
+        r"^/?vat\s*[-:]?\s*(?:[\(\（]?\s*12[%％号]?\s*[\)\）]?)?:?$",
+        r"^12[%％号]?\s+vat:?$",
+        r"^plus\s+vat\s+amount:?$",
+        r"^vat\s*[-:]?\s*12[%％号]?:?$",
     ]
 
     vatable_sales = extract_vatable_sales(predictions)
@@ -395,6 +405,22 @@ def extract_total(predictions):
         return round(vatable_sales + vat_amount, 2)
 
     return None
+
+
+def find_vat_pair(amounts):
+    """Find a Vatable Sales and VAT Amount pair using the 12% VAT relationship."""
+    for first in amounts:
+        for second in amounts:
+            if first == second:
+                continue
+
+            base = max(first, second)
+            vat = min(first, second)
+
+            if round(base * 0.12, 2) == round(vat, 2):
+                return base, vat
+
+    return None, None
 
 
 def validate_vat(vatable_sales, vat_amount):
